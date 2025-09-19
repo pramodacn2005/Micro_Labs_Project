@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, onValue, query, limitToLast } from "firebase/database";
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -13,6 +14,7 @@ const firebaseConfig = {
 
 let appInstance;
 let dbInstance;
+let storageInstance;
 
 export function getFirebaseDb() {
   if (!appInstance) {
@@ -20,6 +22,16 @@ export function getFirebaseDb() {
     dbInstance = getDatabase(appInstance);
   }
   return dbInstance;
+}
+
+export function getFirebaseStorage() {
+  if (!appInstance) {
+    appInstance = initializeApp(firebaseConfig);
+  }
+  if (!storageInstance) {
+    storageInstance = getStorage(appInstance);
+  }
+  return storageInstance;
 }
 
 export function subscribeToSensorData(callback, options = { last: 200 }) {
@@ -30,8 +42,24 @@ export function subscribeToSensorData(callback, options = { last: 200 }) {
     const readings = Object.entries(val).map(([key, value]) => ({ id: key, ...value }));
     readings.sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
     callback(readings);
+  }, (error) => {
+    console.error("Firebase subscription error:", error);
+    // If Firebase fails, we'll fall back to backend polling
   });
   return unsubscribe;
+}
+
+// Helper function to get appropriate limit for timeframe
+export function getLimitForTimeframe(timeframe) {
+  switch (timeframe) {
+    case "1m": return 100;   // 1 minute - very recent data
+    case "15m": return 1000;
+    case "1h": return 1200;
+    case "4h": return 1500;
+    case "24h": return 2000;
+    case "7d": return 5000;
+    default: return 500;
+  }
 }
 
 export const DEFAULT_THRESHOLDS = {

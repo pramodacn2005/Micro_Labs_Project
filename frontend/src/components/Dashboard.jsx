@@ -1,65 +1,286 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import VitalsCard from "./VitalsCard";
-import ChartComponent from "./ChartComponent";
+import QuickActions from "./QuickActions";
+import SummaryCard from "./SummaryCard";
 import AlertPopup from "./AlertPopup";
 import {
   subscribeToSensorData,
   DEFAULT_THRESHOLDS,
   evaluateStatus,
+  getLimitForTimeframe,
 } from "../services/firebaseService";
+import { designTokens } from "../config/designTokens";
 
 const TIMEFRAMES = [
+  { key: "1m", label: "1 min", ms: 1 * 60 * 1000 },
   { key: "15m", label: "15 min", ms: 15 * 60 * 1000 },
+  { key: "1h", label: "1 hour", ms: 60 * 60 * 1000 },
+  { key: "4h", label: "4 hours", ms: 4 * 60 * 60 * 1000 },
   { key: "24h", label: "24 h", ms: 24 * 60 * 60 * 1000 },
   { key: "7d", label: "7 days", ms: 7 * 24 * 60 * 60 * 1000 },
 ];
+
+// Generate sample data for testing when no real data is available
+function generateSampleData(count) {
+  const now = Date.now();
+  const data = [];
+  
+  // Base values for more stable readings
+  let baseHeartRate = 75;
+  let baseSpo2 = 98;
+  let baseBodyTemp = 36.5;
+  let baseAmbientTemp = 25;
+  let baseAccMagnitude = 1.0;
+  
+  for (let i = 0; i < count; i++) {
+    const timestamp = now - (count - i) * 1000; // 1 second intervals
+    
+    // Add small variations to base values for more realistic data
+    const hrVariation = (Math.random() - 0.5) * 10; // ±5 bpm variation
+    const spo2Variation = (Math.random() - 0.5) * 2; // ±1% variation
+    const tempVariation = (Math.random() - 0.5) * 0.3; // ±0.15°C variation
+    const ambientVariation = (Math.random() - 0.5) * 5; // ±2.5°C variation
+    const accVariation = (Math.random() - 0.5) * 0.5; // ±0.25g variation
+    
+    data.push({
+      id: `sample_${i}`,
+      timestamp: timestamp,
+      heartRate: Math.round(baseHeartRate + hrVariation),
+      spo2: Math.round(baseSpo2 + spo2Variation),
+      bodyTemp: Number((baseBodyTemp + tempVariation).toFixed(1)),
+      ambientTemp: Number((baseAmbientTemp + ambientVariation).toFixed(1)),
+      accMagnitude: Number((baseAccMagnitude + accVariation).toFixed(2)),
+      fallDetected: Math.random() < 0.02 // 2% chance of fall (reduced)
+    });
+    
+    // Gradually adjust base values for more realistic trends
+    baseHeartRate += (Math.random() - 0.5) * 0.5;
+    baseSpo2 += (Math.random() - 0.5) * 0.1;
+    baseBodyTemp += (Math.random() - 0.5) * 0.05;
+    baseAmbientTemp += (Math.random() - 0.5) * 0.2;
+    baseAccMagnitude += (Math.random() - 0.5) * 0.1;
+    
+    // Keep values within reasonable bounds
+    baseHeartRate = Math.max(60, Math.min(100, baseHeartRate));
+    baseSpo2 = Math.max(95, Math.min(100, baseSpo2));
+    baseBodyTemp = Math.max(36.0, Math.min(37.5, baseBodyTemp));
+    baseAmbientTemp = Math.max(15, Math.min(35, baseAmbientTemp));
+    baseAccMagnitude = Math.max(0.5, Math.min(2.0, baseAccMagnitude));
+  }
+  
+  return data;
+}
 
 export default function Dashboard() {
   const [readings, setReadings] = useState([]);
   const [timeframe, setTimeframe] = useState(TIMEFRAMES[0].key);
   const [alertOpen, setAlertOpen] = useState(false);
   const [alertMessages, setAlertMessages] = useState([]);
+  const [liveFast, setLiveFast] = useState(false); // false => 10s, true => 1s
+  const [alertCooldownActive, setAlertCooldownActive] = useState(false);
+  const [isStale, setIsStale] = useState(false);
+  const [popupCount, setPopupCount] = useState(0);
   const backendUrl =
-    import.meta.env.VITE_BACKEND_URL || "http://localhost:4000";
+    import.meta.env.VITE_BACKEND_URL || "http://localhost:3000";
   const pollingRef = useRef(null);
+  const lastFirebaseDataRef = useRef(null);
+  const firebaseIntervalRef = useRef(null);
+  const lastAlertTimeRef = useRef(0);
+  const smoothedReadingsRef = useRef([]);
+  const lastDataAtRef = useRef(0);
+  const staleCheckIntervalRef = useRef(null);
+  const firebaseAvailableRef = useRef(false);
+
+  const updateMs = liveFast ? 1000 : 10000;
+  const ALERT_COOLDOWN_MS = 10000; // 10 seconds between alerts
+  const STALE_AFTER_MS = 15000; // consider data stale if no updates for 15s
+  const NOTIFY_AFTER_POPUPS = 3; // send SMS via backend after 3 UI popups
+  const NOTIFY_COOLDOWN_MS = 60 * 1000; // 60 seconds cooldown for UI-triggered notify
+  const lastUiNotifyAtRef = useRef(0);
+
+  // Data smoothing function to reduce fluctuations
+  function smoothReadings(newReadings) {
+    if (newReadings.length === 0) return newReadings;
+    
+    const smoothed = [...newReadings];
+    const windowSize = Math.min(3, newReadings.length); // Use last 3 readings for smoothing
+    
+    for (let i = newReadings.length - 1; i >= Math.max(0, newReadings.length - windowSize); i--) {
+      const current = newReadings[i];
+      const prev = newReadings[i - 1];
+      
+      if (prev) {
+        // Smooth heart rate (prevent sudden jumps > 20 bpm)
+        if (current.heartRate && prev.heartRate) {
+          const hrDiff = Math.abs(current.heartRate - prev.heartRate);
+          if (hrDiff > 20) {
+            smoothed[i].heartRate = prev.heartRate + (current.heartRate - prev.heartRate) * 0.3;
+          }
+        }
+        
+        // Smooth SpO2 (prevent sudden drops > 5%)
+        if (current.spo2 && prev.spo2) {
+          const spo2Diff = Math.abs(current.spo2 - prev.spo2);
+          if (spo2Diff > 5) {
+            smoothed[i].spo2 = prev.spo2 + (current.spo2 - prev.spo2) * 0.2;
+          }
+        }
+        
+        // Smooth body temperature (prevent sudden changes > 0.5°C)
+        if (current.bodyTemp && prev.bodyTemp) {
+          const tempDiff = Math.abs(current.bodyTemp - prev.bodyTemp);
+          if (tempDiff > 0.5) {
+            smoothed[i].bodyTemp = prev.bodyTemp + (current.bodyTemp - prev.bodyTemp) * 0.3;
+          }
+        }
+      }
+    }
+    
+    return smoothed;
+  }
+
+  function normalizeRecord(r) {
+    const tsNum = Number(r.timestamp);
+    let tsMs = isNaN(tsNum) || tsNum === 0 ? Date.now() : (tsNum < 10 ** 12 ? tsNum * 1000 : tsNum);
+    const nowMs = Date.now();
+    const minReasonableMs = 946684800000; // 2000-01-01
+    const maxReasonableMs = nowMs + 24 * 60 * 60 * 1000; // now + 1 day
+    if (tsMs < minReasonableMs || tsMs > maxReasonableMs) {
+      console.warn("Unrealistic timestamp detected, using current time:", r.timestamp);
+      tsMs = nowMs;
+    }
+
+    const pickFirst = (...keys) => {
+      for (const k of keys) {
+        if (r[k] !== undefined && r[k] !== null && r[k] !== "") return r[k];
+      }
+      return null;
+    };
+
+    let heartRateRaw = pickFirst(
+      "heartRate","HeartRate","hr","heart_rate","pulse","bpm","heart"
+    );
+    let spo2Raw = pickFirst(
+      "spo2","SpO2","SPO2","SpO₂","oxygen","oxygenSaturation","o2","oximeter"
+    );
+    let bodyTempRaw = pickFirst(
+      "bodyTemp","BodyTemp","body_temperature","body_temperature_c","temperature","Temperature","temp","temp_c"
+    );
+
+    // Coerce numbers
+    const toNum = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    let heartRate = toNum(heartRateRaw);
+    let spo2 = toNum(spo2Raw);
+    let bodyTemp = toNum(bodyTempRaw);
+
+    // If body temperature seems to be in Fahrenheit, convert to Celsius
+    if (bodyTemp !== null && bodyTemp > 45 && bodyTemp < 120) {
+      bodyTemp = Number(((bodyTemp - 32) * 5 / 9).toFixed(1));
+    }
+
+    const normalized = {
+      ...r,
+      timestamp: tsMs,
+      heartRate,
+      spo2,
+      bodyTemp,
+    };
+
+    return normalized;
+  }
 
   // Fetch sensor data (Firebase first, fallback to backend polling)
   useEffect(() => {
     let unsub = null;
+    
+    const fetchData = async () => {
+      try {
+        const limit = getLimitForTimeframe(timeframe);
+        console.log(`Fetching data for timeframe: ${timeframe}, limit: ${limit}`);
+        const res = await fetch(`${backendUrl}/api/vitals/history?limit=${limit}&timeframe=${timeframe}`);
+        if (!res.ok) {
+          console.error(`Backend fetch failed with status: ${res.status}`);
+          return;
+        }
+        const json = await res.json();
+        const items = json.items || [];
+        console.log(`Received ${items.length} items from backend`);
+        
+        if (items.length === 0) {
+          console.warn("No data received from backend");
+          // Do not generate sample data; mark as possibly stale
+          return;
+        }
+        
+        const normalized = items.map((r) => {
+          const n = normalizeRecord(r);
+          if (items.length > 0 && items.indexOf(r) < 3) {
+            console.log(`Original timestamp: ${r.timestamp}, Converted: ${n.timestamp}, Current time: ${Date.now()}`);
+            console.log(`Full record:`, r);
+          }
+          return n;
+        });
+        const smoothed = smoothReadings(normalized);
+        setReadings(smoothed);
+        lastDataAtRef.current = Date.now();
+        setIsStale(false);
+      } catch (err) {
+        console.error("Backend fetch failed:", err);
+        // Do not generate sample data
+      }
+    };
+
+    // Try Firebase first
     try {
+      const limit = getLimitForTimeframe(timeframe);
+      console.log(`Setting up Firebase subscription for timeframe: ${timeframe}, limit: ${limit}`);
       unsub = subscribeToSensorData(
         (items) => {
-          const normalized = items.map((r) => {
-            const ts = Number(r.timestamp);
-            const tsMs = ts && ts < 10 ** 12 ? ts * 1000 : ts; // normalize timestamp
-            return { ...r, timestamp: tsMs };
-          });
-          setReadings(normalized);
+          console.log(`Received ${items.length} items from Firebase`);
+          firebaseAvailableRef.current = true;
+          if (items.length > 0) {
+            const normalized = items.map((r) => normalizeRecord(r));
+            const smoothed = smoothReadings(normalized);
+            lastFirebaseDataRef.current = smoothed;
+            lastDataAtRef.current = Date.now();
+            setIsStale(false);
+          }
+
+          // Throttle UI updates to selected cadence
+          if (!firebaseIntervalRef.current) {
+            firebaseIntervalRef.current = setInterval(() => {
+              if (lastFirebaseDataRef.current) {
+                setReadings(lastFirebaseDataRef.current);
+              }
+            }, updateMs);
+          }
         },
-        { last: 500 }
+        { last: limit }
       );
     } catch (e) {
       console.warn("⚠️ Firebase not available, using backend polling...");
+      firebaseAvailableRef.current = false;
     }
 
-    // Poll backend if Firebase unavailable
-    if (!pollingRef.current) {
-      pollingRef.current = setInterval(async () => {
-        try {
-          const res = await fetch(`${backendUrl}/api/vitals/history?limit=500`);
-          if (!res.ok) return;
-          const json = await res.json();
-          const items = json.items || [];
-          const normalized = items.map((r) => {
-            const ts = Number(r.timestamp);
-            const tsMs = ts && ts < 10 ** 12 ? ts * 1000 : ts;
-            return { ...r, timestamp: tsMs };
-          });
-          setReadings(normalized);
-        } catch (err) {
-          console.error("Backend fetch failed:", err);
+    // Poll backend only if Firebase is unavailable - respects cadence
+    if (!firebaseAvailableRef.current && !pollingRef.current) {
+      fetchData(); // Initial fetch
+      pollingRef.current = setInterval(fetchData, updateMs);
+    }
+
+    // Start staleness checker
+    if (!staleCheckIntervalRef.current) {
+      staleCheckIntervalRef.current = setInterval(() => {
+        if (!lastDataAtRef.current) return;
+        const age = Date.now() - lastDataAtRef.current;
+        if (age > STALE_AFTER_MS) {
+          setIsStale(true);
         }
-      }, 5000);
+      }, 1000);
     }
 
     return () => {
@@ -68,8 +289,16 @@ export default function Dashboard() {
         clearInterval(pollingRef.current);
         pollingRef.current = null;
       }
+      if (firebaseIntervalRef.current) {
+        clearInterval(firebaseIntervalRef.current);
+        firebaseIntervalRef.current = null;
+      }
+      if (staleCheckIntervalRef.current) {
+        clearInterval(staleCheckIntervalRef.current);
+        staleCheckIntervalRef.current = null;
+      }
     };
-  }, []);
+  }, [timeframe, updateMs]); // reconfigure when cadence changes
 
   // Filter visible data based on timeframe
   const now = Date.now();
@@ -78,14 +307,93 @@ export default function Dashboard() {
 
   const visibleData = useMemo(() => {
     const minTs = now - selectedWindowMs;
-    return readings.filter((r) => (r.timestamp ?? 0) >= minTs);
-  }, [readings, now, selectedWindowMs]);
+    
+    // First, filter out readings with invalid timestamps
+    const validReadings = readings.filter((r) => {
+      const ts = Number(r.timestamp);
+      return !isNaN(ts) && ts > 0;
+    });
+    
+    // Then apply timeframe filtering
+    const filtered = validReadings.filter((r) => {
+      const ts = Number(r.timestamp);
+      return ts >= minTs;
+    });
+    
+    // Debug logging
+    console.log(`Timeframe: ${timeframe}, Total readings: ${readings.length}, Valid readings: ${validReadings.length}, Filtered: ${filtered.length}`);
+    console.log(`Time window: ${selectedWindowMs}ms, Min timestamp: ${minTs}, Now: ${now}`);
+    if (validReadings.length > 0) {
+      const latestTs = validReadings[validReadings.length - 1]?.timestamp;
+      const oldestTs = validReadings[0]?.timestamp;
+      const latestAge = now - latestTs;
+      const oldestAge = now - oldestTs;
+      
+      console.log(`Latest reading timestamp: ${latestTs} (${Math.round(latestAge / 1000 / 60)} minutes ago)`);
+      console.log(`Oldest reading timestamp: ${oldestTs} (${Math.round(oldestAge / 1000 / 60)} minutes ago)`);
+      console.log(`Data spans: ${Math.round((latestTs - oldestTs) / 1000 / 60)} minutes`);
+    }
+    
+    return filtered;
+  }, [readings, now, selectedWindowMs, timeframe]);
 
   const latest = visibleData[visibleData.length - 1];
 
-  // Alert popup logic
+  // Calculate summary data
+  const summaryData = useMemo(() => {
+    if (visibleData.length === 0) {
+      return {
+        totalReadings: 0,
+        avgHeartRate: null,
+        avgSpo2: null,
+        lastFallTime: null
+      };
+    }
+
+    const validHeartRates = visibleData
+      .map(r => r.heartRate)
+      .filter(hr => hr !== null && hr !== undefined && !isNaN(hr));
+    
+    const validSpo2 = visibleData
+      .map(r => r.spo2)
+      .filter(spo2 => spo2 !== null && spo2 !== undefined && !isNaN(spo2));
+
+    const fallEvents = visibleData
+      .filter(r => r.fallDetected)
+      .sort((a, b) => b.timestamp - a.timestamp);
+
+    return {
+      totalReadings: visibleData.length,
+      avgHeartRate: validHeartRates.length > 0 
+        ? Math.round(validHeartRates.reduce((sum, hr) => sum + hr, 0) / validHeartRates.length)
+        : null,
+      avgSpo2: validSpo2.length > 0 
+        ? Math.round(validSpo2.reduce((sum, spo2) => sum + spo2, 0) / validSpo2.length)
+        : null,
+      lastFallTime: fallEvents.length > 0 ? fallEvents[0].timestamp : null
+    };
+  }, [visibleData]);
+
+  // Generate trend data for sparklines (last 8 readings)
+  const getTrendData = (key) => {
+    return visibleData.slice(-8).map(r => r[key]).filter(v => v !== null && v !== undefined && !isNaN(v));
+  };
+
+  // Alert popup logic with cooldown
   useEffect(() => {
     if (!latest) return;
+    
+    const now = Date.now();
+    const timeSinceLastAlert = now - lastAlertTimeRef.current;
+    
+    // Only check for alerts if enough time has passed since last alert
+    if (timeSinceLastAlert < ALERT_COOLDOWN_MS) {
+      setAlertCooldownActive(true);
+      return;
+    } else {
+      setAlertCooldownActive(false);
+    }
+    
     const messages = [];
     const hrStatus = evaluateStatus(
       Number(latest.heartRate),
@@ -108,55 +416,138 @@ export default function Dashboard() {
       DEFAULT_THRESHOLDS.accMagnitude
     );
 
-    if (hrStatus !== "normal") messages.push("Heart rate abnormal");
-    if (spo2Status !== "normal") messages.push("SpO₂ below normal");
-    if (btStatus !== "normal") messages.push("Body temperature abnormal");
-    if (atStatus !== "normal")
-      messages.push("Ambient temperature out of range");
-    if (accStatus !== "normal")
-      messages.push("Abnormal acceleration magnitude");
-    if (latest.fallDetected) messages.push("Fall detected");
+    // Only show alerts for critical conditions or fall detection
+    if (hrStatus === "critical") messages.push("Heart rate critical");
+    if (spo2Status === "critical") messages.push("SpO₂ critically low");
+    if (btStatus === "critical") messages.push("Body temperature critical");
+    if (atStatus === "critical") messages.push("Ambient temperature critical");
+    if (accStatus === "critical") messages.push("Abnormal acceleration detected");
+    if (latest.fallDetected) messages.push("🚨 Fall detected!");
 
-    setAlertMessages(messages);
-    setAlertOpen(messages.length > 0);
+    // Only show alert if there are critical messages and cooldown has passed
+    if (messages.length > 0) {
+      setAlertMessages(messages);
+      setAlertOpen(true);
+      lastAlertTimeRef.current = now;
+    }
   }, [latest]);
+
+  // Count popups when an alert is opened
+  useEffect(() => {
+    if (!alertOpen) return;
+    setPopupCount((c) => c + 1);
+  }, [alertOpen]);
+
+  // Trigger notify when popupCount reaches threshold (handles stale state correctly)
+  useEffect(() => {
+    if (popupCount <= 0) return;
+    const now = Date.now();
+    const timeSinceLastUiNotify = now - lastUiNotifyAtRef.current;
+    if (popupCount >= NOTIFY_AFTER_POPUPS && timeSinceLastUiNotify > NOTIFY_COOLDOWN_MS) {
+      lastUiNotifyAtRef.current = now;
+      setPopupCount(0);
+      const payload = {
+        deviceId: latest?.deviceId,
+        patientName: latest?.patientName,
+        metricMessages: alertMessages,
+        latest,
+        note: `Triggered by dashboard after ${NOTIFY_AFTER_POPUPS} popups`
+      };
+      fetch(`${backendUrl}/api/vitals/notify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }).catch((e) => console.error("UI notify failed", e));
+    }
+  }, [popupCount, alertMessages, latest]);
+
+  // Event handlers
+  const handleEmergency = () => {
+    console.log("Emergency alert triggered");
+    // Add emergency logic here
+  };
+
+  const handleCallCaregiver = () => {
+    console.log("Call caregiver triggered");
+    // Add call caregiver logic here
+  };
+
+  const handleViewMedications = () => {
+    console.log("View medications triggered");
+    // Add view medications logic here
+  };
+
+  const handleViewHistory = () => {
+    console.log("View detailed history triggered");
+    // Add view history logic here
+  };
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-bold">IoT Health Dashboard</h1>
+      {/* Stale data warning */}
+      {isStale && (
+        <div className="flex items-center gap-2 rounded-lg bg-warning-100 text-warning-800 px-4 py-3 text-sm">
+          <div className="w-2 h-2 bg-warning-500 rounded-full animate-pulse"></div>
+          No live data received recently. Displaying last known values.
+        </div>
+      )}
+
+      {/* Timeframe controls */}
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          {alertCooldownActive && (
+            <div className="flex items-center gap-1 text-xs text-warning-600 bg-warning-100 px-2 py-1 rounded-full">
+              <div className="w-2 h-2 bg-warning-500 rounded-full animate-pulse"></div>
+              Alert cooldown active
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           {TIMEFRAMES.map((t) => (
             <button
               key={t.key}
               onClick={() => setTimeframe(t.key)}
-              className={`rounded px-3 py-1 text-sm ${
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
                 timeframe === t.key
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-100"
+                  ? "bg-primary-500 text-white shadow-sm"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
               }`}
             >
               {t.label}
             </button>
           ))}
+          <div className="ml-2 flex items-center gap-1">
+            <span className="text-xs text-gray-600">Live</span>
+            <button
+              onClick={() => setLiveFast((v) => !v)}
+              className={`rounded-lg px-2 py-1 text-xs font-medium ${
+                liveFast ? "bg-success-500 text-white" : "bg-gray-100 text-gray-700"
+              }`}
+              title={liveFast ? "Updating every 1s" : "Updating every 10s"}
+            >
+              {liveFast ? "1s" : "10s"}
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Vitals Cards */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+      {/* Vitals Cards Grid - 2 rows x 4 columns */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <VitalsCard
           label="Heart Rate"
           value={latest?.heartRate}
-          unit="bpm"
+          unit="BPM"
           status={evaluateStatus(
             Number(latest?.heartRate),
             DEFAULT_THRESHOLDS.heartRate
           )}
           timestamp={latest?.timestamp}
+          normalRange="Normal range: 60-100 BPM"
+          trendData={getTrendData('heartRate')}
+          isAlerted={alertMessages.some(msg => msg.includes('Heart rate'))}
         />
         <VitalsCard
-          label="SpO₂"
+          label="Blood Oxygen"
           value={latest?.spo2}
           unit="%"
           status={evaluateStatus(
@@ -164,9 +555,12 @@ export default function Dashboard() {
             DEFAULT_THRESHOLDS.spo2
           )}
           timestamp={latest?.timestamp}
+          normalRange="Normal range: 95-100%"
+          trendData={getTrendData('spo2')}
+          isAlerted={alertMessages.some(msg => msg.includes('SpO₂'))}
         />
         <VitalsCard
-          label="Body Temp"
+          label="Temperature"
           value={latest?.bodyTemp}
           unit="°C"
           status={evaluateStatus(
@@ -174,6 +568,9 @@ export default function Dashboard() {
             DEFAULT_THRESHOLDS.bodyTemp
           )}
           timestamp={latest?.timestamp}
+          normalRange="Normal range: 36.1-37.2°C"
+          trendData={getTrendData('bodyTemp')}
+          isAlerted={alertMessages.some(msg => msg.includes('temperature'))}
         />
         <VitalsCard
           label="Ambient Temp"
@@ -184,6 +581,8 @@ export default function Dashboard() {
             DEFAULT_THRESHOLDS.ambientTemp
           )}
           timestamp={latest?.timestamp}
+          normalRange="Environment sensor"
+          trendData={getTrendData('ambientTemp')}
         />
         <VitalsCard
           label="Acceleration Magnitude"
@@ -194,6 +593,9 @@ export default function Dashboard() {
             DEFAULT_THRESHOLDS.accMagnitude
           )}
           timestamp={latest?.timestamp}
+          normalRange="Movement detection"
+          trendData={getTrendData('accMagnitude')}
+          isAlerted={alertMessages.some(msg => msg.includes('acceleration'))}
         />
         <VitalsCard
           label="Fall Detected"
@@ -201,36 +603,44 @@ export default function Dashboard() {
           unit=""
           status={latest?.fallDetected ? "critical" : "normal"}
           timestamp={latest?.timestamp}
+          normalRange="Fall detection system"
+          fallDetected={latest?.fallDetected}
+          lastFallTime={summaryData.lastFallTime}
+          isAlerted={latest?.fallDetected}
         />
+        {/* Placeholder cards for 8-card grid */}
+        <div className="bg-gray-50 rounded-card p-4 border border-gray-200">
+          <div className="text-center text-gray-500 text-sm">
+            Additional Sensor
+          </div>
+        </div>
+        <div className="bg-gray-50 rounded-card p-4 border border-gray-200">
+          <div className="text-center text-gray-500 text-sm">
+            Additional Sensor
+          </div>
+        </div>
       </div>
 
-      {/* Charts */}
-      <div className="space-y-6">
-        <ChartComponent
-          data={visibleData}
-          lines={[
-            { key: "heartRate", label: "Heart Rate", color: "#2563eb" },
-            { key: "spo2", label: "SpO₂", color: "#16a34a" },
-          ]}
-        />
-        <ChartComponent
-          data={visibleData}
-          lines={[
-            { key: "bodyTemp", label: "Body Temp", color: "#dc2626" },
-            { key: "ambientTemp", label: "Ambient Temp", color: "#ea580c" },
-          ]}
-        />
-        <ChartComponent
-          data={visibleData}
-          lines={[
-            {
-              key: "accMagnitude",
-              label: "Acceleration Magnitude",
-              color: "#7c3aed",
-            },
-          ]}
-        />
+      {/* Quick Actions and Summary Cards */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <QuickActions
+            onEmergency={handleEmergency}
+            onCallCaregiver={handleCallCaregiver}
+            onViewMedications={handleViewMedications}
+          />
+        </div>
+        <div>
+          <SummaryCard
+            total={summaryData.totalReadings}
+            avgHeartRate={summaryData.avgHeartRate}
+            avgSpo2={summaryData.avgSpo2}
+            lastFallTime={summaryData.lastFallTime}
+            onViewHistory={handleViewHistory}
+          />
+        </div>
       </div>
+
 
       {/* Alerts */}
       <AlertPopup

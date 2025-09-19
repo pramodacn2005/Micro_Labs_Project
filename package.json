@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "dotenv": "^17.2.2",
+    "twilio": "^5.9.0",
+    "type":"module"
+  }
+}

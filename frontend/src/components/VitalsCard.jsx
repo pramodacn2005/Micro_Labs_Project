@@ -1,25 +1,119 @@
 import React from "react";
+import SparklineChart from "./Charts/SparklineChart";
+import { getStatusColors, designTokens } from "../config/designTokens";
 
-const statusToColors = {
-  normal: "bg-green-100 text-green-800 border-green-300",
-  warning: "bg-yellow-100 text-yellow-800 border-yellow-300",
-  critical: "bg-red-100 text-red-800 border-red-300",
-  unknown: "bg-gray-100 text-gray-800 border-gray-300"
-};
+export default function VitalsCard({ 
+  label, 
+  value, 
+  unit, 
+  status, 
+  timestamp, 
+  icon,
+  normalRange,
+  trendData = [],
+  isAlerted = false,
+  fallDetected = false,
+  lastFallTime = null
+}) {
+  const statusColors = getStatusColors(status);
+  const isDisabled = value === null || value === undefined || isNaN(value);
+  
+  // Get appropriate icon based on label or provided icon
+  const getIcon = () => {
+    if (icon) return icon;
+    const iconMap = {
+      'Heart Rate': '❤️',
+      'SpO₂': '🫁', 
+      'Blood Oxygen': '🫁',
+      'Body Temp': '🌡️',
+      'Temperature': '🌡️',
+      'Ambient Temp': '🌡️',
+      'Acceleration Magnitude': '📊',
+      'Fall Detected': '⚠️'
+    };
+    return iconMap[label] || '📊';
+  };
 
-export default function VitalsCard({ label, value, unit, status, timestamp }) {
-  const color = statusToColors[status] || statusToColors.unknown;
+  // Get status text based on special conditions
+  const getStatusText = () => {
+    if (fallDetected) return 'Fall Detected';
+    if (isAlerted) return 'Alerted';
+    if (isDisabled) return 'No Data';
+    return status === 'normal' ? 'Normal' : status === 'warning' ? 'Warning' : 'Critical';
+  };
+
+  // Format value display
+  const formatValue = () => {
+    if (isDisabled) return '—';
+    if (typeof value === 'number') {
+      return value.toFixed(value % 1 === 0 ? 0 : 1);
+    }
+    return value;
+  };
+
+  // Get card styling based on status
+  const getCardClasses = () => {
+    const baseClasses = "bg-white rounded-card p-4 shadow-card border transition-all duration-200";
+    const statusClasses = {
+      normal: "border-gray-200",
+      warning: "border-warning-300",
+      critical: "border-danger-300 shadow-glow",
+      unknown: "border-gray-300"
+    };
+    return `${baseClasses} ${statusClasses[status] || statusClasses.unknown}`;
+  };
+
   return (
-    <div className={`border rounded-lg p-4 shadow-sm ${color}`}>
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">{label}</h3>
-        <span className="text-xs opacity-70">{timestamp ? new Date(timestamp).toLocaleTimeString() : "--"}</span>
+    <div className={getCardClasses()}>
+      {/* Header with label, icon, and status */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-lg" aria-hidden="true">
+            {getIcon()}
+          </span>
+          <h3 className="text-sm font-semibold text-gray-800">{label}</h3>
+        </div>
+        <div className="flex items-center gap-2">
+          {trendData.length > 0 && (
+            <SparklineChart 
+              data={trendData} 
+              width={40} 
+              height={16} 
+              color={status === 'normal' ? '#22c55e' : status === 'warning' ? '#f59e0b' : '#ef4444'}
+            />
+          )}
+          <span className={`px-2 py-1 rounded-full text-xs font-medium ${statusColors.pill}`}>
+            {getStatusText()}
+          </span>
+        </div>
       </div>
-      <div className="mt-2 flex items-end gap-1">
-        <span className="text-2xl font-bold">{value ?? "--"}</span>
-        {unit ? <span className="text-sm">{unit}</span> : null}
+
+      {/* Main value display */}
+      <div className="flex items-end gap-1 mb-3">
+        <span className={`text-3xl font-bold ${isDisabled ? 'text-gray-400' : 'text-gray-900'}`}>
+          {formatValue()}
+        </span>
+        {unit && (
+          <span className="text-sm text-gray-600 mb-1">{unit}</span>
+        )}
       </div>
-      <div className="mt-2 text-xs uppercase tracking-wide">{status}</div>
+
+      {/* Footer with normal range and timestamp */}
+      <div className="flex items-center justify-between text-xs text-gray-500">
+        <span>
+          {normalRange || (isDisabled ? 'No data available' : '')}
+        </span>
+        <span>
+          {timestamp ? new Date(timestamp).toLocaleTimeString() : '--:--'}
+        </span>
+      </div>
+
+      {/* Special indicators */}
+      {fallDetected && lastFallTime && (
+        <div className="mt-2 text-xs text-danger-600 font-medium">
+          Last fall: {new Date(lastFallTime).toLocaleString()}
+        </div>
+      )}
     </div>
   );
 }
