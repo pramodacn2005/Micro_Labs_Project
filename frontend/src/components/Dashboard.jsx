@@ -3,13 +3,18 @@ import VitalsCard from "./VitalsCard";
 import QuickActions from "./QuickActions";
 import SummaryCard from "./SummaryCard";
 import AlertPopup from "./AlertPopup";
+import RealtimeGraph from "./RealtimeGraph";
+import { useAuth } from "../contexts/AuthContext";
 import {
-  subscribeToSensorData,
+  getFirebaseDb,
   DEFAULT_THRESHOLDS,
   evaluateStatus,
   getLimitForTimeframe,
 } from "../services/firebaseService";
 import { designTokens } from "../config/designTokens";
+import { runAllTests } from "../utils/firebaseTest";
+import { runAllFirebaseTests } from "../utils/testFirebaseConnection";
+import { ref, get, query, orderByKey, limitToLast } from "firebase/database";
 
 const TIMEFRAMES = [
   { key: "1m", label: "1 min", ms: 1 * 60 * 1000 },
@@ -72,6 +77,7 @@ function generateSampleData(count) {
 }
 
 export default function Dashboard() {
+  const { user, isAuthenticated } = useAuth();
   const [readings, setReadings] = useState([]);
   const [timeframe, setTimeframe] = useState(TIMEFRAMES[0].key);
   const [alertOpen, setAlertOpen] = useState(false);
@@ -80,6 +86,7 @@ export default function Dashboard() {
   const [alertCooldownActive, setAlertCooldownActive] = useState(false);
   const [isStale, setIsStale] = useState(false);
   const [popupCount, setPopupCount] = useState(0);
+  const [isLiveMode, setIsLiveMode] = useState(false); // Live mode state
   const backendUrl =
     import.meta.env.VITE_BACKEND_URL || "http://localhost:3000";
   const pollingRef = useRef(null);
@@ -90,6 +97,7 @@ export default function Dashboard() {
   const lastDataAtRef = useRef(0);
   const staleCheckIntervalRef = useRef(null);
   const firebaseAvailableRef = useRef(false);
+  const livePollingRef = useRef(null); // For 5-second live polling
 
   const updateMs = liveFast ? 1000 : 10000;
   const ALERT_COOLDOWN_MS = 10000; // 10 seconds between alerts
@@ -97,6 +105,62 @@ export default function Dashboard() {
   const NOTIFY_AFTER_POPUPS = 3; // send SMS via backend after 3 UI popups
   const NOTIFY_COOLDOWN_MS = 60 * 1000; // 60 seconds cooldown for UI-triggered notify
   const lastUiNotifyAtRef = useRef(0);
+
+  // Function to fetch latest data from Firebase
+  const fetchLatestData = async () => {
+    try {
+      const db = getFirebaseDb();
+      if (!db) {
+        console.warn("Firebase database not available");
+        return;
+      }
+
+      console.log("🔄 [LIVE MODE] Fetching latest data from Firebase /sensor_data");
+      const sensorRef = ref(db, "sensor_data");
+      const sensorQuery = query(sensorRef, orderByKey(), limitToLast(1));
+      const snapshot = await get(sensorQuery);
+      
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const readings = Object.entries(data).map(([key, value]) => ({ 
+          id: key, 
+          ...value 
+        }));
+        
+        if (readings.length > 0) {
+          const latestReading = readings[0];
+          const timestamp = new Date(latestReading.timestamp);
+          console.log("✅ [LIVE MODE] Latest data fetched:", {
+            dataPath: "/sensor_data",
+            timestamp: timestamp.toLocaleString(),
+            timestampValue: latestReading.timestamp,
+            heartRate: latestReading.heartRate,
+            spo2: latestReading.spo2,
+            bodyTemp: latestReading.bodyTemp,
+            ambientTemp: latestReading.ambientTemp,
+            accMagnitude: latestReading.accMagnitude,
+            fallDetected: latestReading.fallDetected
+          });
+          
+          // Update readings with latest data
+          setReadings(prev => {
+            const normalized = normalizeRecord(latestReading);
+            const smoothed = smoothReadings([normalized]);
+            const newReadings = [...prev.slice(-99), ...smoothed]; // Keep last 100 readings
+            console.log(`📊 [LIVE MODE] Updated readings count: ${newReadings.length}`);
+            return newReadings;
+          });
+          
+          lastDataAtRef.current = Date.now();
+          setIsStale(false);
+        }
+      } else {
+        console.log("⚠️ [LIVE MODE] No data available in Firebase /sensor_data");
+      }
+    } catch (error) {
+      console.error("❌ [LIVE MODE] Error fetching latest data:", error);
+    }
+  };
 
   // Data smoothing function to reduce fluctuations
   function smoothReadings(newReadings) {
@@ -193,22 +257,74 @@ export default function Dashboard() {
     return normalized;
   }
 
-  // Fetch sensor data (Firebase first, fallback to backend polling)
+  // Live mode toggle effect
   useEffect(() => {
+    if (isLiveMode) {
+      console.log("🟢 [LIVE MODE] Started - polling every 5 seconds");
+      console.log("📡 [LIVE MODE] Data source: Firebase /sensor_data");
+      console.log("⏱️ [LIVE MODE] Polling interval: 5000ms");
+      // Start 5-second polling
+      livePollingRef.current = setInterval(fetchLatestData, 5000);
+      // Initial fetch
+      fetchLatestData();
+    } else {
+      console.log("⏸️ [LIVE MODE] Stopped");
+      console.log("🛑 [LIVE MODE] Polling interval cleared");
+      // Stop polling
+      if (livePollingRef.current) {
+        clearInterval(livePollingRef.current);
+        livePollingRef.current = null;
+      }
+    }
+
+    return () => {
+      if (livePollingRef.current) {
+        console.log("🧹 [LIVE MODE] Cleanup - clearing polling interval");
+        clearInterval(livePollingRef.current);
+        livePollingRef.current = null;
+      }
+    };
+  }, [isLiveMode]);
+
+  // Fetch sensor data (Firebase first, fallback to backend polling) - only when not in live mode
+  useEffect(() => {
+    if (isLiveMode) return; // Skip this effect when in live mode
+
+    // Debug: Log vitals data fetching info
+    console.log("🔍 Dashboard Vitals Debug Info:");
+    console.log("- User authenticated:", isAuthenticated);
+    console.log("- User UID:", user?.uid || 'Not logged in');
+    console.log("- User email:", user?.email || 'Not logged in');
+    console.log("- Vitals data path: sensor_data (global, no auth required)");
+    console.log("- Timeframe:", timeframe);
+    
+    // Run Firebase connection tests
+    console.log("🧪 Running Firebase connection tests...");
+    runAllTests();
+    
+    // Run comprehensive Firebase tests
+    runAllFirebaseTests().then(success => {
+      if (success) {
+        console.log("🎉 All Firebase tests passed!");
+      } else {
+        console.log("⚠️ Some Firebase tests failed - check console for details");
+      }
+    });
+
     let unsub = null;
     
     const fetchData = async () => {
       try {
         const limit = getLimitForTimeframe(timeframe);
-        console.log(`Fetching data for timeframe: ${timeframe}, limit: ${limit}`);
+        console.log(`🌡️ Fetching global vitals data, timeframe: ${timeframe}, limit: ${limit}`);
         const res = await fetch(`${backendUrl}/api/vitals/history?limit=${limit}&timeframe=${timeframe}`);
         if (!res.ok) {
-          console.error(`Backend fetch failed with status: ${res.status}`);
+          console.error(`❌ Backend fetch failed with status: ${res.status}`);
           return;
         }
         const json = await res.json();
         const items = json.items || [];
-        console.log(`Received ${items.length} items from backend`);
+        console.log(`✅ Received ${items.length} vitals items from backend (global data)`);
         
         if (items.length === 0) {
           console.warn("No data received from backend");
@@ -237,10 +353,10 @@ export default function Dashboard() {
     // Try Firebase first
     try {
       const limit = getLimitForTimeframe(timeframe);
-      console.log(`Setting up Firebase subscription for timeframe: ${timeframe}, limit: ${limit}`);
+      console.log(`🌡️ Setting up Firebase subscription for global vitals, timeframe: ${timeframe}, limit: ${limit}`);
       unsub = subscribeToSensorData(
         (items) => {
-          console.log(`Received ${items.length} items from Firebase`);
+          console.log(`✅ Received ${items.length} vitals items from Firebase (global sensor_data)`);
           firebaseAvailableRef.current = true;
           if (items.length > 0) {
             const normalized = items.map((r) => normalizeRecord(r));
@@ -298,7 +414,7 @@ export default function Dashboard() {
         staleCheckIntervalRef.current = null;
       }
     };
-  }, [timeframe, updateMs]); // reconfigure when cadence changes
+  }, [timeframe, updateMs, isLiveMode]); // reconfigure when cadence changes (vitals are global, no auth required)
 
   // Filter visible data based on timeframe
   const now = Date.now();
@@ -482,6 +598,33 @@ export default function Dashboard() {
     // Add view history logic here
   };
 
+  // Live mode toggle button
+  const LiveModeToggle = () => (
+    <div className="flex items-center gap-4 mb-6">
+      <span className="text-sm font-medium text-gray-700">Live Monitoring:</span>
+      <button
+        onClick={() => {
+          setIsLiveMode(!isLiveMode);
+          console.log(`🔄 Live mode ${!isLiveMode ? 'started' : 'stopped'}`);
+        }}
+        className={`px-6 py-3 rounded-lg text-sm font-medium transition-colors ${
+          isLiveMode
+            ? 'bg-green-500 text-white hover:bg-green-600 shadow-sm'
+            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+        }`}
+      >
+        {isLiveMode ? '🟢 Live (Stop)' : '▶️ Live (Start)'}
+      </button>
+      {isLiveMode && (
+        <div className="flex items-center gap-2 text-sm text-green-600">
+          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+          <span>Polling every 5 seconds</span>
+        </div>
+      )}
+    </div>
+  );
+
+  // Render main dashboard
   return (
     <div className="space-y-6">
       {/* Stale data warning */}
@@ -491,6 +634,9 @@ export default function Dashboard() {
           No live data received recently. Displaying last known values.
         </div>
       )}
+
+      {/* Live mode toggle */}
+      <LiveModeToggle />
 
       {/* Timeframe controls */}
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -528,6 +674,13 @@ export default function Dashboard() {
               {liveFast ? "1s" : "10s"}
             </button>
           </div>
+          {/* Debug Button */}
+          <button
+            onClick={() => runAllFirebaseTests()}
+            className="ml-2 rounded-lg px-3 py-1.5 text-xs font-medium bg-blue-500 text-white hover:bg-blue-600 transition-colors"
+          >
+            🧪 Test Firebase
+          </button>
         </div>
       </div>
 
@@ -620,6 +773,27 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Live Monitoring Graph */}
+      {isLiveMode && (
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="mb-4">
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">Live Monitoring Graph</h3>
+            <p className="text-sm text-gray-600">
+              Real-time vitals data updating every 5 seconds
+            </p>
+          </div>
+          <RealtimeGraph
+            data={visibleData}
+            dataKey="heartRate"
+            title="Heart Rate"
+            unit="BPM"
+            color="#ef4444"
+            height={300}
+            showTooltip={true}
+          />
+        </div>
+      )}
 
       {/* Quick Actions and Summary Cards */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">

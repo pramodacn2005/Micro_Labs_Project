@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
 import Dashboard from "../components/Dashboard";
@@ -15,8 +16,15 @@ export default function Home() {
   const [notificationsCount] = useState(3);
   const [lastUpdated] = useState(Date.now());
   const [isOnline] = useState(true);
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const handleNavigation = (pageId) => {
+    if (pageId === 'login') {
+      navigate('/login');
+      return;
+    }
+    
     setCurrentPage(pageId);
     // Add navigation logic here
     console.log(`Navigating to: ${pageId}`);

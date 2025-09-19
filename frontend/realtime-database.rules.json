@@ -1,0 +1,16 @@
+{
+  "rules": {
+    "sensor_data": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    "users": {
+      "$uid": {
+        "vitals": {
+          ".read": "$uid === auth.uid",
+          ".write": "$uid === auth.uid"
+        }
+      }
+    }
+  }
+}

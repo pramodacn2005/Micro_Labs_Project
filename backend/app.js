@@ -3,7 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 //import vitalsRouter from "./routes/vitals.js";
 dotenv.config();
-import vitalsRouter from "./controllers/vitalsController.js";
+import vitalsRouter from "./controllers/vitalsControllerSimple.js";
 import fileRouter from "./controllers/fileControllerSimple.js";
 
 // Load .env from backend directory by default. If you keep a single root .env, set ENV_PATH.
