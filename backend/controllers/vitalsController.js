@@ -13,6 +13,7 @@ import {
   getLatestAlertForDeviceMetric
 } from "../services/firebaseAdminService.js";
 import { sendSMS } from "../services/alertService.js";
+import { processVitalReading } from "./vitalAlertController.js";
 
 const router = express.Router();
 
@@ -56,6 +57,30 @@ router.post("/update", async (req, res) => {
     // Save reading to DB
     const saved = await saveReading(reading);
 
+    // Process vital readings with new email alert system
+    const deviceId = reading.deviceId || "unknown";
+    const patientData = {
+      patientName: reading.patientName,
+      patientId: reading.patientId || deviceId,
+      email: reading.patientEmail
+    };
+    
+    // Extract vital readings for email alert system
+    const vitalReadings = {
+      heartRate: reading.heartRate,
+      spo2: reading.spo2,
+      bodyTemp: reading.bodyTemp,
+      ambientTemp: reading.ambientTemp,
+      accMagnitude: reading.accMagnitude
+    };
+    
+    // Process with new email alert system
+    try {
+      await processVitalReading(deviceId, vitalReadings, patientData);
+    } catch (error) {
+      console.error("❌ [VITALS] Error processing vital alerts:", error);
+    }
+
     // Immediately handle fall detection (send immediate alert, with cooldown)
     if (reading.fallDetected) {
       const lastFallAlert = await getLatestAlertForMetric("fallDetected");
@@ -71,7 +96,6 @@ router.post("/update", async (req, res) => {
     }
 
     // Per-device consecutive abnormal logic with duplicate suppression
-    const deviceId = reading.deviceId || "unknown";
     const possibleMetrics = ["heartRate", "spo2", "bodyTemp", "ambientTemp", "accMagnitude"];
     const metricsTriggered = [];
 

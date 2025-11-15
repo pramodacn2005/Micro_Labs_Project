@@ -1,12 +1,18 @@
 import React from "react";
+import { useAuth } from "../contexts/AuthContext";
+import UserDropdown from "./UserDropdown";
 
 export default function Topbar({ 
-  patientName = "Pramoda CN", 
+  patientName, 
   lastUpdated, 
   notifications = 0, 
   online = true,
   alertsCount = 0 
 }) {
+  const { userData, user } = useAuth();
+  
+  // Use the same name logic as the profile component
+  const displayName = patientName || userData?.fullName || user?.displayName || "User";
   const formatLastUpdated = () => {
     if (!lastUpdated) return "--:--";
     const now = new Date();
@@ -21,20 +27,22 @@ export default function Topbar({
     return updated.toLocaleDateString();
   };
 
+  // No user dropdown functionality needed
+
   return (
     <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur-sm">
       <div className="flex h-16 items-center justify-between px-6">
         {/* Left side - Welcome message */}
         <div className="flex-1">
           <h1 className="text-xl font-bold text-gray-900">
-            Welcome back, {patientName}
+            Welcome back, {displayName}
           </h1>
           <p className="text-sm text-gray-600">
             Your health dashboard • Last updated {formatLastUpdated()}
           </p>
         </div>
 
-        {/* Right side - Status indicators */}
+        {/* Right side - Status indicators and User dropdown */}
         <div className="flex items-center gap-4">
           {/* Device status */}
           <div className="flex items-center gap-2 text-sm">
@@ -73,6 +81,9 @@ export default function Topbar({
               <span className="font-medium">{alertsCount} Alert{alertsCount > 1 ? 's' : ''}</span>
             </div>
           )}
+
+          {/* User Dropdown */}
+          <UserDropdown />
         </div>
       </div>
     </header>

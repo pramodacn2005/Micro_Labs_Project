@@ -138,6 +138,20 @@ export const DEFAULT_THRESHOLDS = {
   accMagnitude: { min: 0, max: 3, unit: "g" }
 };
 
+// Emergency Alert Thresholds - More strict for emergency alerts
+export const EMERGENCY_THRESHOLDS = {
+  heartRate: { min: 50, max: 120, unit: "bpm" },
+  spo2: { min: 90, max: 100, unit: "%" },
+  bodyTemp: { min: 35, max: 38, unit: "°C" },
+  fallDetected: { critical: true, unit: "boolean" }
+};
+
+// Caregiver contact information
+export const CAREGIVER_CONTACT = {
+  phone: "+917019220796",
+  name: "Primary Caregiver"
+};
+
 export function evaluateStatus(value, { min, max }) {
   if (value === undefined || value === null || Number.isNaN(Number(value))) return "unknown";
   if (min !== undefined && value < min) return value < min * 0.9 ? "critical" : "warning";
@@ -145,8 +159,82 @@ export function evaluateStatus(value, { min, max }) {
   return "normal";
 }
 
+// Emergency alert checking functions
+export function checkEmergencyThresholds(reading) {
+  const alerts = [];
+  
+  // Heart Rate: <50 or >120
+  if (reading.heartRate !== null && reading.heartRate !== undefined) {
+    if (reading.heartRate < 50) {
+      alerts.push({
+        parameter: 'Heart Rate',
+        value: reading.heartRate,
+        threshold: '<50',
+        unit: 'BPM',
+        severity: 'critical'
+      });
+    } else if (reading.heartRate > 120) {
+      alerts.push({
+        parameter: 'Heart Rate',
+        value: reading.heartRate,
+        threshold: '>120',
+        unit: 'BPM',
+        severity: 'critical'
+      });
+    }
+  }
+  
+  // SpO2: <90
+  if (reading.spo2 !== null && reading.spo2 !== undefined) {
+    if (reading.spo2 < 90) {
+      alerts.push({
+        parameter: 'SpO2',
+        value: reading.spo2,
+        threshold: '<90',
+        unit: '%',
+        severity: 'critical'
+      });
+    }
+  }
+  
+  // Body Temp: >38°C
+  if (reading.bodyTemp !== null && reading.bodyTemp !== undefined) {
+    if (reading.bodyTemp > 38) {
+      alerts.push({
+        parameter: 'Body Temperature',
+        value: reading.bodyTemp,
+        threshold: '>38',
+        unit: '°C',
+        severity: 'critical'
+      });
+    }
+  }
+  
+  // Fall Detected: true
+  if (reading.fallDetected === true) {
+    alerts.push({
+      parameter: 'Fall Detection',
+      value: 'Detected',
+      threshold: 'true',
+      unit: '',
+      severity: 'critical'
+    });
+  }
+  
+  return alerts;
+}
+
+// Generate emergency SMS message
+export function generateEmergencySMS(alert, patientName = "Patient") {
+  const timestamp = new Date(alert.timestamp || Date.now()).toLocaleString();
+  return `🚨 Emergency Alert
+Patient: ${patientName}
+Issue: ${alert.parameter} crossed threshold (value: ${alert.value}${alert.unit})
+Time: ${timestamp}`;
+}
+
 // Authentication functions
-export async function signup(email, password, fullName, phone = null) {
+export async function signup(email, password, fullName, phone = null, role = 'patient') {
   try {
     const auth = getFirebaseAuth();
     const firestore = getFirestore();
@@ -163,6 +251,7 @@ export async function signup(email, password, fullName, phone = null) {
       fullName,
       email,
       phone,
+      role: role || 'patient', // Default to patient if not provided
       createdAt: new Date().toISOString(),
       lastLoginAt: new Date().toISOString()
     };

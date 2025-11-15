@@ -244,7 +244,10 @@ const RealtimeGraph = ({
         >
           <div className="font-semibold">{title}</div>
           <div>Value: {hoveredPoint.y} {unit}</div>
-          <div>Time: {new Date(hoveredPoint.x).toLocaleString()}</div>
+          <div>Timestamp: {new Date(hoveredPoint.x).toLocaleString()}</div>
+          <div className="text-xs text-gray-300">
+            {new Date(hoveredPoint.x).toISOString()}
+          </div>
           {hoveredPoint.original.fallDetected && (
             <div className="text-red-400">🚨 Fall Detected</div>
           )}

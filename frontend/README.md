@@ -17,6 +17,13 @@ A modern, accessible Patient Health Monitoring Dashboard built with React and Ta
 - **Quick Actions**: Emergency alert, call caregiver, view medications
 - **Summary Card**: Today's health metrics and averages
 
+### 🌡️ Fever Symptoms Checker (new)
+- **Optimized form controls**: checkboxes, radio groups, sliders, quick-select buttons, and “Use my location” for geolocation.
+- **Validation**: React Hook Form + Zod schema with accessible error messaging and consent enforcement.
+- **AI + PDF workflow**: runs `/api/fever-check`, renders probability/severity, explains SHAP top features, downloads encrypted PDF reports, and surfaces clinician-flagged medication guidance.
+- **AI Assistant modal**: contextual chat that can suggest precautions, tablets (with clinician verification flag), diet plans, and nearby hospitals after each prediction.
+- **Disclaimers & privacy**: persistent medical disclaimer plus consent gate before PHI collection.
+
 ### 🔧 Technical Features
 - **Real-time Data**: Live updates with configurable refresh rates
 - **Data Mapping**: Exact backend key mapping (heartRate, spo2, bodyTemp, etc.)
@@ -189,7 +196,8 @@ npm run build
 
 ### Environment Variables
 ```env
-VITE_BACKEND_URL=http://localhost:3000
+VITE_BACKEND_URL=http://localhost:4000/api
+VITE_API_BASE_URL=http://localhost:4000/api
 ```
 
 ## Customization

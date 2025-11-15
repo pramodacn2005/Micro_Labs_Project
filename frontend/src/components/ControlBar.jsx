@@ -58,9 +58,9 @@ export default function ControlBar({
         </button>
         
         <div className="flex items-center gap-1 text-xs text-gray-500">
-          <span>Made with</span>
-          <span className="text-primary-500 font-medium">Blink</span>
-          <span className="text-lg" aria-hidden="true">🧠</span>
+          <span></span>
+          <span className="text-primary-500 font-medium"></span>
+          <span className="text-lg" aria-hidden="true"></span>
         </div>
       </div>
     </div>

@@ -3,23 +3,43 @@
 // backend/services/firebaseAdminService.js
 import admin from "firebase-admin";
 import fs from "fs";
+import path from "path";
 import dotenv from "dotenv";
 dotenv.config();
 
-const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-if (!serviceAccountPath) {
-  throw new Error("Please set GOOGLE_APPLICATION_CREDENTIALS in .env (path to service account JSON)");
-}
-const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
-
+// Initialize Firebase Admin SDK
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount),
-    databaseURL: process.env.FIREBASE_DATABASE_URL,
-  });
+  try {
+    // Try to get service account path from env or use default location
+    const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || 
+                               path.join(process.cwd(), "config", "serviceAccountKey.json");
+    
+    if (!fs.existsSync(serviceAccountPath)) {
+      console.error(`[Firebase Admin] Service account file not found at: ${serviceAccountPath}`);
+      throw new Error(`Service account file not found. Please set GOOGLE_APPLICATION_CREDENTIALS in .env`);
+    }
+    
+    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
+    
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+      databaseURL: process.env.FIREBASE_DATABASE_URL,
+      projectId: serviceAccount.project_id
+    });
+    
+    console.log(`[Firebase Admin] ✅ Initialized successfully for project: ${serviceAccount.project_id}`);
+  } catch (error) {
+    console.error("[Firebase Admin] ❌ Initialization failed:", error.message);
+    throw error;
+  }
+} else {
+  console.log("[Firebase Admin] ✅ Already initialized");
 }
 
 const db = admin.firestore();
+
+// Export db and admin for use in other services
+export { db, admin };
 
 // Save a reading (includes numeric timestamp 'ts' for immediate ordering)
 export async function saveReading(reading) {

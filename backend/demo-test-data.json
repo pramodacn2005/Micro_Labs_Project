@@ -1,0 +1,275 @@
+{
+  "high_fever_cases": [
+    {
+      "name": "High Fever Case 1 - Severe",
+      "description": "Adult with very high fever, multiple symptoms",
+      "data": {
+        "age": 35,
+        "gender": "Male",
+        "body_temperature": {
+          "temperature_value": 39.5,
+          "temperature_unit": "C"
+        },
+        "heart_rate_bpm": 110,
+        "respiratory_rate_bpm": 22,
+        "spo2": 96,
+        "bp_systolic": 130,
+        "bp_diastolic": 85,
+        "chills": true,
+        "sweating": true,
+        "loss_of_appetite": true,
+        "sore_throat": true,
+        "runny_nose": false,
+        "nasal_congestion": true,
+        "vomiting": true,
+        "fatigue": "severe",
+        "headache": "severe",
+        "body_aches": "severe",
+        "breathing_difficulty": "mild",
+        "cough": "dry",
+        "body_pain_scale": 8,
+        "alcohol_consumption": "none",
+        "medical_history": false,
+        "medical_history_text": "",
+        "location": {
+          "city": "Mumbai"
+        },
+        "consent": true
+      },
+      "expected_result": "High Fever"
+    },
+    {
+      "name": "High Fever Case 2 - With Complications",
+      "description": "Elderly patient with high fever and breathing issues",
+      "data": {
+        "age": 68,
+        "gender": "Female",
+        "body_temperature": {
+          "temperature_value": 40.2,
+          "temperature_unit": "C"
+        },
+        "heart_rate_bpm": 125,
+        "respiratory_rate_bpm": 28,
+        "spo2": 92,
+        "bp_systolic": 140,
+        "bp_diastolic": 90,
+        "chills": true,
+        "sweating": false,
+        "loss_of_appetite": true,
+        "sore_throat": false,
+        "runny_nose": false,
+        "nasal_congestion": true,
+        "vomiting": true,
+        "fatigue": "severe",
+        "headache": "moderate",
+        "body_aches": "severe",
+        "breathing_difficulty": "moderate",
+        "cough": "wet",
+        "body_pain_scale": 9,
+        "alcohol_consumption": "none",
+        "medical_history": true,
+        "medical_history_text": "Hypertension, Diabetes",
+        "location": {
+          "city": "Delhi"
+        },
+        "consent": true
+      },
+      "expected_result": "High Fever"
+    },
+    {
+      "name": "High Fever Case 3 - Child",
+      "description": "Child with high fever and typical symptoms",
+      "data": {
+        "age": 8,
+        "gender": "Male",
+        "body_temperature": {
+          "temperature_value": 39.8,
+          "temperature_unit": "C"
+        },
+        "heart_rate_bpm": 130,
+        "respiratory_rate_bpm": 24,
+        "spo2": 97,
+        "bp_systolic": 110,
+        "bp_diastolic": 70,
+        "chills": true,
+        "sweating": true,
+        "loss_of_appetite": true,
+        "sore_throat": true,
+        "runny_nose": true,
+        "nasal_congestion": true,
+        "vomiting": false,
+        "fatigue": "moderate",
+        "headache": "moderate",
+        "body_aches": "moderate",
+        "breathing_difficulty": "none",
+        "cough": "dry",
+        "body_pain_scale": 6,
+        "alcohol_consumption": "none",
+        "medical_history": false,
+        "medical_history_text": "",
+        "location": {
+          "city": "Bangalore"
+        },
+        "consent": true
+      },
+      "expected_result": "High Fever"
+    }
+  ],
+  "normal_fever_cases": [
+    {
+      "name": "Normal Temperature Case 1 - Healthy Adult",
+      "description": "Adult with normal temperature, no fever",
+      "data": {
+        "age": 28,
+        "gender": "Female",
+        "body_temperature": {
+          "temperature_value": 36.8,
+          "temperature_unit": "C"
+        },
+        "heart_rate_bpm": 72,
+        "respiratory_rate_bpm": 16,
+        "spo2": 98,
+        "bp_systolic": 120,
+        "bp_diastolic": 80,
+        "chills": false,
+        "sweating": false,
+        "loss_of_appetite": false,
+        "sore_throat": false,
+        "runny_nose": false,
+        "nasal_congestion": false,
+        "vomiting": false,
+        "fatigue": "none",
+        "headache": "none",
+        "body_aches": "none",
+        "breathing_difficulty": "none",
+        "cough": "none",
+        "body_pain_scale": 1,
+        "alcohol_consumption": "occasional",
+        "medical_history": false,
+        "medical_history_text": "",
+        "location": {
+          "city": "Pune"
+        },
+        "consent": true
+      },
+      "expected_result": "No Fever"
+    },
+    {
+      "name": "Normal Temperature Case 2 - Mild Symptoms",
+      "description": "Normal temperature with mild cold symptoms",
+      "data": {
+        "age": 42,
+        "gender": "Male",
+        "body_temperature": {
+          "temperature_value": 37.1,
+          "temperature_unit": "C"
+        },
+        "heart_rate_bpm": 78,
+        "respiratory_rate_bpm": 18,
+        "spo2": 97,
+        "bp_systolic": 125,
+        "bp_diastolic": 82,
+        "chills": false,
+        "sweating": false,
+        "loss_of_appetite": false,
+        "sore_throat": true,
+        "runny_nose": true,
+        "nasal_congestion": true,
+        "vomiting": false,
+        "fatigue": "mild",
+        "headache": "mild",
+        "body_aches": "none",
+        "breathing_difficulty": "none",
+        "cough": "dry",
+        "body_pain_scale": 2,
+        "alcohol_consumption": "none",
+        "medical_history": false,
+        "medical_history_text": "",
+        "location": {
+          "city": "Chennai"
+        },
+        "consent": true
+      },
+      "expected_result": "No Fever or Mild Fever"
+    },
+    {
+      "name": "Normal Temperature Case 3 - Elderly Healthy",
+      "description": "Elderly person with normal vitals",
+      "data": {
+        "age": 75,
+        "gender": "Female",
+        "body_temperature": {
+          "temperature_value": 36.5,
+          "temperature_unit": "C"
+        },
+        "heart_rate_bpm": 68,
+        "respiratory_rate_bpm": 14,
+        "spo2": 96,
+        "bp_systolic": 135,
+        "bp_diastolic": 88,
+        "chills": false,
+        "sweating": false,
+        "loss_of_appetite": false,
+        "sore_throat": false,
+        "runny_nose": false,
+        "nasal_congestion": false,
+        "vomiting": false,
+        "fatigue": "none",
+        "headache": "none",
+        "body_aches": "none",
+        "breathing_difficulty": "none",
+        "cough": "none",
+        "body_pain_scale": 0,
+        "alcohol_consumption": "none",
+        "medical_history": true,
+        "medical_history_text": "Arthritis (controlled)",
+        "location": {
+          "city": "Hyderabad"
+        },
+        "consent": true
+      },
+      "expected_result": "No Fever"
+    }
+  ],
+  "moderate_fever_cases": [
+    {
+      "name": "Moderate Fever Case 1",
+      "description": "Moderate fever with typical flu symptoms",
+      "data": {
+        "age": 30,
+        "gender": "Male",
+        "body_temperature": {
+          "temperature_value": 38.5,
+          "temperature_unit": "C"
+        },
+        "heart_rate_bpm": 95,
+        "respiratory_rate_bpm": 20,
+        "spo2": 97,
+        "bp_systolic": 125,
+        "bp_diastolic": 80,
+        "chills": true,
+        "sweating": true,
+        "loss_of_appetite": true,
+        "sore_throat": true,
+        "runny_nose": true,
+        "nasal_congestion": true,
+        "vomiting": false,
+        "fatigue": "moderate",
+        "headache": "moderate",
+        "body_aches": "moderate",
+        "breathing_difficulty": "none",
+        "cough": "dry",
+        "body_pain_scale": 5,
+        "alcohol_consumption": "none",
+        "medical_history": false,
+        "medical_history_text": "",
+        "location": {
+          "city": "Kolkata"
+        },
+        "consent": true
+      },
+      "expected_result": "Moderate Fever"
+    }
+  ]
+}
+

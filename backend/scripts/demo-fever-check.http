@@ -1,0 +1,41 @@
+### Demo Fever Symptoms Checker
+POST http://localhost:4000/api/fever-check
+Content-Type: application/json
+
+{
+  "age": 32,
+  "gender": "Female",
+  "body_temperature": { "temperature_value": 102.2, "temperature_unit": "F" },
+  "heart_rate_bpm": 118,
+  "respiratory_rate_bpm": 22,
+  "spo2": 95,
+  "bp_systolic": 124,
+  "bp_diastolic": 82,
+  "chills": true,
+  "sweating": true,
+  "loss_of_appetite": true,
+  "sore_throat": true,
+  "runny_nose": false,
+  "nasal_congestion": true,
+  "vomiting": false,
+  "fatigue": "moderate",
+  "headache": "mild",
+  "body_aches": "moderate",
+  "breathing_difficulty": "mild",
+  "cough": "dry",
+  "body_pain_scale": 5,
+  "alcohol_consumption": "none",
+  "medical_history": true,
+  "medical_history_text": "Paracetamol 500 mg PRN",
+  "location": { "lat": 37.7749, "lon": -122.4194 },
+  "consent": true
+}
+
+
+
+
+
+
+
+
+

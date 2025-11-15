@@ -1,0 +1,12 @@
+{
+  "trained_at": "2025-11-14T10:23:58.627439+00:00",
+  "dataset": "C:\\Users\\PRAMODA\\OneDrive\\Desktop\\cursor_AI\\project-root\\ml\\data\\synthetic_fever_dataset.csv",
+  "metrics": {
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "roc_auc": 1.0
+  },
+  "model_path": "C:\\Users\\PRAMODA\\OneDrive\\Desktop\\cursor_AI\\project-root\\backend\\models\\fever_model.joblib"
+}

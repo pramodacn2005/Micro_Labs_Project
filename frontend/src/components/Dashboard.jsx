@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState, useRef } from "react";
 import VitalsCard from "./VitalsCard";
 import QuickActions from "./QuickActions";
 import SummaryCard from "./SummaryCard";
-import AlertPopup from "./AlertPopup";
 import RealtimeGraph from "./RealtimeGraph";
 import { useAuth } from "../contexts/AuthContext";
 import {
@@ -10,6 +9,9 @@ import {
   DEFAULT_THRESHOLDS,
   evaluateStatus,
   getLimitForTimeframe,
+  checkEmergencyThresholds,
+  generateEmergencySMS,
+  CAREGIVER_CONTACT,
 } from "../services/firebaseService";
 import { designTokens } from "../config/designTokens";
 import { runAllTests } from "../utils/firebaseTest";
@@ -80,31 +82,94 @@ export default function Dashboard() {
   const { user, isAuthenticated } = useAuth();
   const [readings, setReadings] = useState([]);
   const [timeframe, setTimeframe] = useState(TIMEFRAMES[0].key);
-  const [alertOpen, setAlertOpen] = useState(false);
-  const [alertMessages, setAlertMessages] = useState([]);
   const [liveFast, setLiveFast] = useState(false); // false => 10s, true => 1s
-  const [alertCooldownActive, setAlertCooldownActive] = useState(false);
   const [isStale, setIsStale] = useState(false);
-  const [popupCount, setPopupCount] = useState(0);
   const [isLiveMode, setIsLiveMode] = useState(false); // Live mode state
+  const [emergencyAlert, setEmergencyAlert] = useState(null); // Emergency alert state
+  const [smsSent, setSmsSent] = useState(false); // SMS sent status
   const backendUrl =
     import.meta.env.VITE_BACKEND_URL || "http://localhost:3000";
   const pollingRef = useRef(null);
   const lastFirebaseDataRef = useRef(null);
   const firebaseIntervalRef = useRef(null);
-  const lastAlertTimeRef = useRef(0);
   const smoothedReadingsRef = useRef([]);
   const lastDataAtRef = useRef(0);
   const staleCheckIntervalRef = useRef(null);
   const firebaseAvailableRef = useRef(false);
   const livePollingRef = useRef(null); // For 5-second live polling
+  const lastEmergencyAlertRef = useRef(0); // Track last emergency alert time
 
   const updateMs = liveFast ? 1000 : 10000;
-  const ALERT_COOLDOWN_MS = 10000; // 10 seconds between alerts
   const STALE_AFTER_MS = 15000; // consider data stale if no updates for 15s
-  const NOTIFY_AFTER_POPUPS = 3; // send SMS via backend after 3 UI popups
-  const NOTIFY_COOLDOWN_MS = 60 * 1000; // 60 seconds cooldown for UI-triggered notify
-  const lastUiNotifyAtRef = useRef(0);
+  const EMERGENCY_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes cooldown for emergency alerts
+
+  // Function to send emergency SMS
+  const sendEmergencySMS = async (alert) => {
+    try {
+      const patientName = userData?.fullName || user?.displayName || "Patient";
+      const message = generateEmergencySMS(alert, patientName);
+      
+      console.log("🚨 [EMERGENCY] Sending SMS to caregiver:", CAREGIVER_CONTACT.phone);
+      console.log("📱 [EMERGENCY] SMS Message:", message);
+      
+      const response = await fetch(`${backendUrl}/api/vitals/send-emergency-sms`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: CAREGIVER_CONTACT.phone,
+          message: message,
+          alert: alert,
+          patientName: patientName
+        })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        console.log("✅ [EMERGENCY] SMS sent successfully:", result);
+        setSmsSent(true);
+        return true;
+      } else {
+        console.error("❌ [EMERGENCY] SMS failed:", response.status);
+        return false;
+      }
+    } catch (error) {
+      console.error("❌ [EMERGENCY] SMS error:", error);
+      return false;
+    }
+  };
+
+  // Function to check for emergency alerts
+  const checkForEmergencyAlerts = (reading) => {
+    if (!reading) return;
+    
+    const now = Date.now();
+    const timeSinceLastEmergency = now - lastEmergencyAlertRef.current;
+    
+    // Check if enough time has passed since last emergency alert
+    if (timeSinceLastEmergency < EMERGENCY_COOLDOWN_MS) {
+      console.log("⏰ [EMERGENCY] Cooldown active, skipping emergency check");
+      return;
+    }
+    
+    const emergencyAlerts = checkEmergencyThresholds(reading);
+    
+    if (emergencyAlerts.length > 0) {
+      console.log("🚨 [EMERGENCY] Emergency threshold breached:", emergencyAlerts);
+      
+      // Set emergency alert state
+      const alert = {
+        ...emergencyAlerts[0], // Take the first critical alert
+        timestamp: reading.timestamp,
+        reading: reading
+      };
+      
+      setEmergencyAlert(alert);
+      lastEmergencyAlertRef.current = now;
+      
+      // Send SMS automatically
+      sendEmergencySMS(alert);
+    }
+  };
 
   // Function to fetch latest data from Firebase
   const fetchLatestData = async () => {
@@ -115,7 +180,7 @@ export default function Dashboard() {
         return;
       }
 
-      console.log("🔄 [LIVE MODE] Fetching latest data from Firebase /sensor_data");
+      console.log("🔄 [LIVE MODE] Fetching latest data from Firebase /sensor_data (10s polling)");
       const sensorRef = ref(db, "sensor_data");
       const sensorQuery = query(sensorRef, orderByKey(), limitToLast(1));
       const snapshot = await get(sensorQuery);
@@ -148,6 +213,10 @@ export default function Dashboard() {
             const smoothed = smoothReadings([normalized]);
             const newReadings = [...prev.slice(-99), ...smoothed]; // Keep last 100 readings
             console.log(`📊 [LIVE MODE] Updated readings count: ${newReadings.length}`);
+            
+            // Check for emergency alerts with the latest reading
+            checkForEmergencyAlerts(normalized);
+            
             return newReadings;
           });
           
@@ -209,8 +278,19 @@ export default function Dashboard() {
     const nowMs = Date.now();
     const minReasonableMs = 946684800000; // 2000-01-01
     const maxReasonableMs = nowMs + 24 * 60 * 60 * 1000; // now + 1 day
-    if (tsMs < minReasonableMs || tsMs > maxReasonableMs) {
-      console.warn("Unrealistic timestamp detected, using current time:", r.timestamp);
+    
+    // Check if timestamp is in seconds (Unix timestamp) and convert to milliseconds
+    if (tsMs < minReasonableMs && tsMs > 0) {
+      // If it's a reasonable Unix timestamp in seconds, convert to milliseconds
+      if (tsMs > 1000000000 && tsMs < 2000000000) { // Between 2001 and 2033
+        tsMs = tsMs * 1000;
+        console.log("🕒 [TIMESTAMP] Converted Unix timestamp from seconds to milliseconds:", r.timestamp, "->", tsMs);
+      } else {
+        console.warn("Unrealistic timestamp detected, using current time:", r.timestamp);
+        tsMs = nowMs;
+      }
+    } else if (tsMs > maxReasonableMs) {
+      console.warn("Future timestamp detected, using current time:", r.timestamp);
       tsMs = nowMs;
     }
 
@@ -260,15 +340,15 @@ export default function Dashboard() {
   // Live mode toggle effect
   useEffect(() => {
     if (isLiveMode) {
-      console.log("🟢 [LIVE MODE] Started - polling every 5 seconds");
+      console.log("🟢 Live mode started");
       console.log("📡 [LIVE MODE] Data source: Firebase /sensor_data");
-      console.log("⏱️ [LIVE MODE] Polling interval: 5000ms");
-      // Start 5-second polling
-      livePollingRef.current = setInterval(fetchLatestData, 5000);
+      console.log("⏱️ [LIVE MODE] Polling interval: 10000ms (10 seconds)");
+      // Start 10-second polling
+      livePollingRef.current = setInterval(fetchLatestData, 10000);
       // Initial fetch
       fetchLatestData();
     } else {
-      console.log("⏸️ [LIVE MODE] Stopped");
+      console.log("⏸️ Live mode stopped");
       console.log("🛑 [LIVE MODE] Polling interval cleared");
       // Stop polling
       if (livePollingRef.current) {
@@ -416,6 +496,29 @@ export default function Dashboard() {
     };
   }, [timeframe, updateMs, isLiveMode]); // reconfigure when cadence changes (vitals are global, no auth required)
 
+  // Cleanup effect for component unmount
+  useEffect(() => {
+    return () => {
+      console.log("🧹 [CLEANUP] Dashboard component unmounting - cleaning up all intervals");
+      if (livePollingRef.current) {
+        clearInterval(livePollingRef.current);
+        livePollingRef.current = null;
+      }
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+      if (firebaseIntervalRef.current) {
+        clearInterval(firebaseIntervalRef.current);
+        firebaseIntervalRef.current = null;
+      }
+      if (staleCheckIntervalRef.current) {
+        clearInterval(staleCheckIntervalRef.current);
+        staleCheckIntervalRef.current = null;
+      }
+    };
+  }, []);
+
   // Filter visible data based on timeframe
   const now = Date.now();
   const selectedWindowMs =
@@ -495,97 +598,31 @@ export default function Dashboard() {
     return visibleData.slice(-8).map(r => r[key]).filter(v => v !== null && v !== undefined && !isNaN(v));
   };
 
-  // Alert popup logic with cooldown
-  useEffect(() => {
-    if (!latest) return;
-    
-    const now = Date.now();
-    const timeSinceLastAlert = now - lastAlertTimeRef.current;
-    
-    // Only check for alerts if enough time has passed since last alert
-    if (timeSinceLastAlert < ALERT_COOLDOWN_MS) {
-      setAlertCooldownActive(true);
-      return;
-    } else {
-      setAlertCooldownActive(false);
-    }
-    
-    const messages = [];
-    const hrStatus = evaluateStatus(
-      Number(latest.heartRate),
-      DEFAULT_THRESHOLDS.heartRate
-    );
-    const spo2Status = evaluateStatus(
-      Number(latest.spo2),
-      DEFAULT_THRESHOLDS.spo2
-    );
-    const btStatus = evaluateStatus(
-      Number(latest.bodyTemp),
-      DEFAULT_THRESHOLDS.bodyTemp
-    );
-    const atStatus = evaluateStatus(
-      Number(latest.ambientTemp),
-      DEFAULT_THRESHOLDS.ambientTemp
-    );
-    const accStatus = evaluateStatus(
-      Number(latest.accMagnitude),
-      DEFAULT_THRESHOLDS.accMagnitude
-    );
-
-    // Only show alerts for critical conditions or fall detection
-    if (hrStatus === "critical") messages.push("Heart rate critical");
-    if (spo2Status === "critical") messages.push("SpO₂ critically low");
-    if (btStatus === "critical") messages.push("Body temperature critical");
-    if (atStatus === "critical") messages.push("Ambient temperature critical");
-    if (accStatus === "critical") messages.push("Abnormal acceleration detected");
-    if (latest.fallDetected) messages.push("🚨 Fall detected!");
-
-    // Only show alert if there are critical messages and cooldown has passed
-    if (messages.length > 0) {
-      setAlertMessages(messages);
-      setAlertOpen(true);
-      lastAlertTimeRef.current = now;
-    }
-  }, [latest]);
-
-  // Count popups when an alert is opened
-  useEffect(() => {
-    if (!alertOpen) return;
-    setPopupCount((c) => c + 1);
-  }, [alertOpen]);
-
-  // Trigger notify when popupCount reaches threshold (handles stale state correctly)
-  useEffect(() => {
-    if (popupCount <= 0) return;
-    const now = Date.now();
-    const timeSinceLastUiNotify = now - lastUiNotifyAtRef.current;
-    if (popupCount >= NOTIFY_AFTER_POPUPS && timeSinceLastUiNotify > NOTIFY_COOLDOWN_MS) {
-      lastUiNotifyAtRef.current = now;
-      setPopupCount(0);
-      const payload = {
-        deviceId: latest?.deviceId,
-        patientName: latest?.patientName,
-        metricMessages: alertMessages,
-        latest,
-        note: `Triggered by dashboard after ${NOTIFY_AFTER_POPUPS} popups`
-      };
-      fetch(`${backendUrl}/api/vitals/notify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      }).catch((e) => console.error("UI notify failed", e));
-    }
-  }, [popupCount, alertMessages, latest]);
 
   // Event handlers
   const handleEmergency = () => {
-    console.log("Emergency alert triggered");
+    console.log("🚨 [EMERGENCY] Manual emergency alert triggered");
     // Add emergency logic here
   };
 
   const handleCallCaregiver = () => {
-    console.log("Call caregiver triggered");
-    // Add call caregiver logic here
+    console.log("📞 [CARE] Call caregiver button clicked");
+    console.log("📞 [CARE] Initiating call to:", CAREGIVER_CONTACT.phone);
+    // Open phone dialer with caregiver number
+    window.open(`tel:${CAREGIVER_CONTACT.phone}`, '_self');
+  };
+
+  const handleSendAlertSMS = async () => {
+    if (emergencyAlert) {
+      console.log("📱 [EMERGENCY] Manual SMS send requested");
+      await sendEmergencySMS(emergencyAlert);
+    }
+  };
+
+  const handleDismissEmergency = () => {
+    console.log("❌ [EMERGENCY] Emergency alert dismissed");
+    setEmergencyAlert(null);
+    setSmsSent(false);
   };
 
   const handleViewMedications = () => {
@@ -618,7 +655,8 @@ export default function Dashboard() {
       {isLiveMode && (
         <div className="flex items-center gap-2 text-sm text-green-600">
           <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-          <span>Polling every 5 seconds</span>
+          <span className="font-medium">LIVE</span>
+          <span>• Polling every 10 seconds</span>
         </div>
       )}
     </div>
@@ -638,15 +676,61 @@ export default function Dashboard() {
       {/* Live mode toggle */}
       <LiveModeToggle />
 
+      {/* Emergency Alert Section */}
+      {emergencyAlert && (
+        <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg shadow-lg">
+          <div className="flex items-start">
+            <div className="flex-shrink-0">
+              <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center">
+                <span className="text-white text-sm font-bold">!</span>
+              </div>
+            </div>
+            <div className="ml-3 flex-1">
+              <h3 className="text-lg font-semibold text-red-800 mb-2">
+                🚨 Emergency Alert Detected
+              </h3>
+              <div className="text-red-700 mb-4">
+                <p className="font-medium">
+                  {emergencyAlert.parameter}: {emergencyAlert.value}{emergencyAlert.unit}
+                </p>
+                <p className="text-sm">
+                  Threshold: {emergencyAlert.threshold} | 
+                  Time: {new Date(emergencyAlert.timestamp).toLocaleString()}
+                </p>
+                {smsSent && (
+                  <p className="text-sm text-green-600 mt-1">
+                    ✅ SMS sent to caregiver
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={handleSendAlertSMS}
+                  className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-700 transition-colors"
+                >
+                  📱 Send Alert SMS
+                </button>
+                <button
+                  onClick={handleCallCaregiver}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                >
+                  📞 Call Caregiver
+                </button>
+                <button
+                  onClick={handleDismissEmergency}
+                  className="bg-gray-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-600 transition-colors"
+                >
+                  ❌ Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Timeframe controls */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          {alertCooldownActive && (
-            <div className="flex items-center gap-1 text-xs text-warning-600 bg-warning-100 px-2 py-1 rounded-full">
-              <div className="w-2 h-2 bg-warning-500 rounded-full animate-pulse"></div>
-              Alert cooldown active
-            </div>
-          )}
         </div>
         <div className="flex items-center gap-2">
           {TIMEFRAMES.map((t) => (
@@ -697,7 +781,6 @@ export default function Dashboard() {
           timestamp={latest?.timestamp}
           normalRange="Normal range: 60-100 BPM"
           trendData={getTrendData('heartRate')}
-          isAlerted={alertMessages.some(msg => msg.includes('Heart rate'))}
         />
         <VitalsCard
           label="Blood Oxygen"
@@ -710,7 +793,6 @@ export default function Dashboard() {
           timestamp={latest?.timestamp}
           normalRange="Normal range: 95-100%"
           trendData={getTrendData('spo2')}
-          isAlerted={alertMessages.some(msg => msg.includes('SpO₂'))}
         />
         <VitalsCard
           label="Temperature"
@@ -723,7 +805,6 @@ export default function Dashboard() {
           timestamp={latest?.timestamp}
           normalRange="Normal range: 36.1-37.2°C"
           trendData={getTrendData('bodyTemp')}
-          isAlerted={alertMessages.some(msg => msg.includes('temperature'))}
         />
         <VitalsCard
           label="Ambient Temp"
@@ -748,7 +829,6 @@ export default function Dashboard() {
           timestamp={latest?.timestamp}
           normalRange="Movement detection"
           trendData={getTrendData('accMagnitude')}
-          isAlerted={alertMessages.some(msg => msg.includes('acceleration'))}
         />
         <VitalsCard
           label="Fall Detected"
@@ -759,7 +839,6 @@ export default function Dashboard() {
           normalRange="Fall detection system"
           fallDetected={latest?.fallDetected}
           lastFallTime={summaryData.lastFallTime}
-          isAlerted={latest?.fallDetected}
         />
         {/* Placeholder cards for 8-card grid */}
         <div className="bg-gray-50 rounded-card p-4 border border-gray-200">
@@ -774,26 +853,6 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Live Monitoring Graph */}
-      {isLiveMode && (
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold text-gray-800 mb-2">Live Monitoring Graph</h3>
-            <p className="text-sm text-gray-600">
-              Real-time vitals data updating every 5 seconds
-            </p>
-          </div>
-          <RealtimeGraph
-            data={visibleData}
-            dataKey="heartRate"
-            title="Heart Rate"
-            unit="BPM"
-            color="#ef4444"
-            height={300}
-            showTooltip={true}
-          />
-        </div>
-      )}
 
       {/* Quick Actions and Summary Cards */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -816,12 +875,6 @@ export default function Dashboard() {
       </div>
 
 
-      {/* Alerts */}
-      <AlertPopup
-        visible={alertOpen}
-        messages={alertMessages}
-        onClose={() => setAlertOpen(false)}
-      />
     </div>
   );
 }

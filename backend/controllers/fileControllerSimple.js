@@ -37,9 +37,10 @@ let fileStorage = [
     uploadedDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
     uploadedBy: "Dr. Sarah Wilson",
     fileSize: "2.3 MB",
-    patientName: "Pramoda CN",
-    downloadUrl: "http://localhost:3000/api/files/download/demo_1",
-    viewUrl: "http://localhost:3000/api/files/view/demo_1",
+    patientName: "Vish",
+    description: "Prescription for diabetes medication and blood pressure control",
+    downloadUrl: "http://localhost:4000/api/files/download/demo_1",
+    viewUrl: "http://localhost:4000/api/files/view/demo_1",
     storagePath: "uploads/demo_1_Prescription_Jan_2024.pdf",
     buffer: Buffer.from("Mock PDF content for demonstration")
   },
@@ -50,9 +51,10 @@ let fileStorage = [
     uploadedDate: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
     uploadedBy: "Patient",
     fileSize: "1.8 MB",
-    patientName: "Pramoda CN",
-    downloadUrl: "http://localhost:3000/api/files/download/demo_2",
-    viewUrl: "http://localhost:3000/api/files/view/demo_2",
+    patientName: "Vish",
+    description: "Complete blood count and lipid profile results",
+    downloadUrl: "http://localhost:4000/api/files/download/demo_2",
+    viewUrl: "http://localhost:4000/api/files/view/demo_2",
     storagePath: "uploads/demo_2_Lab_Report_Blood_Test.png",
     buffer: Buffer.from("Mock image content for demonstration")
   }
@@ -65,7 +67,7 @@ router.post('/upload', upload.array('files', 10), async (req, res) => {
       return res.status(400).json({ error: 'No files uploaded' });
     }
 
-    const { patientName, uploadedBy } = req.body;
+    const { patientName, uploadedBy, description } = req.body;
     
     if (!patientName) {
       return res.status(400).json({ error: 'Patient name is required' });
@@ -88,6 +90,7 @@ router.post('/upload', upload.array('files', 10), async (req, res) => {
         uploadedDate: new Date(),
         uploadedBy: uploadedBy || 'Patient',
         patientName,
+        description: description || '',
         downloadUrl: `http://localhost:4000/api/files/download/${fileId}`,
         viewUrl: `http://localhost:4000/api/files/view/${fileId}`,
         storagePath: `uploads/${fileId}_${fileName}`,

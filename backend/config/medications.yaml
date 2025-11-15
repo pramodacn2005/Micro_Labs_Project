@@ -1,0 +1,48 @@
+# NOTE: Replace the placeholder guidance with clinician-verified dosing before production.
+- id: paracetamol
+  name: "Paracetamol (Acetaminophen)"
+  clinician_verified: false # TODO: Update once approved by clinician
+  severity: ["low", "moderate", "high"]
+  ages:
+    child:
+      dosing_guidance: "Example - verify with clinician: 10-15 mg/kg every 4-6 hours (max 60 mg/kg/day)"
+    adolescent:
+      dosing_guidance: "Example - verify with clinician: 250-500 mg every 4-6 hours (max 3 g/day)"
+    adult:
+      dosing_guidance: "Example - verify with clinician: 500-1000 mg every 6 hours (max 4 g/day)"
+    senior:
+      dosing_guidance: "Example - verify with clinician: 500 mg every 6 hours (max 3 g/day)"
+  contraindications:
+    - "Severe liver disease"
+  references:
+    - "https://www.who.int/publications/i/item/WHO-MHP-HPS-EML-2023.02"
+  notes: "Ensure patient has no known allergy to acetaminophen."
+
+- id: ibuprofen
+  name: "Ibuprofen"
+  clinician_verified: false # TODO: Update once approved by clinician
+  severity: ["low", "moderate"]
+  ages:
+    child:
+      dosing_guidance: "Example - verify with clinician: 5-10 mg/kg every 6-8 hours (max 40 mg/kg/day)"
+    adolescent:
+      dosing_guidance: "Example - verify with clinician: 200-400 mg every 6 hours (max 1200 mg/day without supervision)"
+    adult:
+      dosing_guidance: "Example - verify with clinician: 400 mg every 6 hours (max 2400 mg/day)"
+    senior:
+      dosing_guidance: "Example - verify with clinician: 200-400 mg every 8 hours (monitor renal function)"
+  contraindications:
+    - "Renal impairment"
+    - "Gastric ulcers"
+  references:
+    - "https://www.who.int/publications/i/item/WHO-MHP-HPS-EML-2023.02"
+  notes: "Advise taking with food; avoid combining with other NSAIDs."
+
+
+
+
+
+
+
+
+

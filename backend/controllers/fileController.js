@@ -66,7 +66,7 @@ router.post('/upload', upload.array('files', 10), async (req, res) => {
       return res.status(400).json({ error: 'No files uploaded' });
     }
 
-    const { patientName, uploadedBy } = req.body;
+    const { patientName, uploadedBy, description } = req.body;
     
     if (!patientName) {
       return res.status(400).json({ error: 'Patient name is required' });
@@ -111,6 +111,7 @@ router.post('/upload', upload.array('files', 10), async (req, res) => {
         uploadedDate: new Date(),
         uploadedBy: uploadedBy || 'Patient',
         patientName,
+        description: description || '',
         downloadUrl,
         viewUrl: downloadUrl,
         storagePath: `patient-files/${patientName.replace(/\s+/g, '_')}/${fileId}_${fileName}`

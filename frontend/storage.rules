@@ -1,10 +1,19 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    // Patient files - users can only access their own files
-    match /patient-files/{patientName}/{fileName} {
-      allow read, write, delete: if request.auth != null && 
-        patientName == request.auth.token.email.replace('.', '_');
+    // Patient files - authenticated users can access files
+    match /patient-files/{userId}/{fileName} {
+      allow read, write, delete: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Allow all authenticated users to read/write patient files (for development)
+    match /patient-files/{allPaths=**} {
+      allow read, write, delete: if request.auth != null;
+    }
+    
+    // Allow CORS preflight requests
+    match /{allPaths=**} {
+      allow read, write: if request.method == 'OPTIONS';
     }
     
     // Default deny all other files

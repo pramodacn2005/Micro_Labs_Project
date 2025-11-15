@@ -18,4 +18,44 @@ router.post("/send-test-sms", async (req, res) => {
   }
 });
 
+// ✅ Emergency SMS endpoint
+router.post("/send-emergency-sms", async (req, res) => {
+  try {
+    const { to, message, alert, patientName } = req.body;
+    
+    console.log("🚨 [EMERGENCY SMS] Request received:", {
+      to,
+      patientName,
+      alert: alert?.parameter,
+      messageLength: message?.length
+    });
+    
+    if (!to || !message) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Missing 'to' or 'message' in request body" 
+      });
+    }
+    
+    // Send SMS using Twilio with specific recipient
+    await sendSMS(message, to);
+    
+    console.log("✅ [EMERGENCY SMS] Sent successfully to:", to);
+    
+    res.json({ 
+      success: true, 
+      message: `Emergency SMS sent to ${to}`,
+      timestamp: new Date().toISOString(),
+      alert: alert
+    });
+  } catch (e) {
+    console.error("❌ [EMERGENCY SMS] Failed:", e.message);
+    res.status(500).json({ 
+      success: false, 
+      error: e.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
 export default router;

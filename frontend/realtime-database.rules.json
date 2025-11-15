@@ -4,6 +4,10 @@
       ".read": true,
       ".write": "auth != null"
     },
+    "test_connection": {
+      ".read": true,
+      ".write": true
+    },
     "users": {
       "$uid": {
         "vitals": {

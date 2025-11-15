@@ -1,5 +1,6 @@
 // backend/controllers/vitalsControllerSimple.js
 import express from "express";
+import { sendSMS } from "../services/alertService.js";
 
 const router = express.Router();
 
@@ -146,6 +147,56 @@ router.get("/health", (req, res) => {
     message: "Vitals API is healthy",
     timestamp: new Date().toISOString()
   });
+});
+
+// POST /api/vitals/send-emergency-sms - Send emergency SMS
+router.post("/send-emergency-sms", async (req, res) => {
+  try {
+    const { to, message, alert, patientName } = req.body;
+    
+    console.log("🚨 [EMERGENCY SMS] Request received:", {
+      to,
+      patientName,
+      alert: alert?.parameter,
+      messageLength: message?.length
+    });
+    
+    if (!to || !message) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Missing 'to' or 'message' in request body" 
+      });
+    }
+    
+    // Send SMS using Twilio with specific recipient
+    await sendSMS(message, to);
+    
+    console.log("✅ [EMERGENCY SMS] Sent successfully to:", to);
+    
+    res.json({ 
+      success: true, 
+      message: `Emergency SMS sent to ${to}`,
+      timestamp: new Date().toISOString(),
+      alert: alert
+    });
+  } catch (e) {
+    console.error("❌ [EMERGENCY SMS] Failed:", e.message);
+    res.status(500).json({ 
+      success: false, 
+      error: e.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// POST /api/vitals/send-test-sms - Test SMS endpoint
+router.post("/send-test-sms", async (req, res) => {
+  try {
+    await sendSMS("🚨 Test alert from IoT Health Monitoring Dashboard!");
+    res.json({ success: true, message: "Test SMS sent to caregiver." });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 export default router;

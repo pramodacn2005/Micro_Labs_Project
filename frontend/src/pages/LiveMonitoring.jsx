@@ -5,11 +5,12 @@ import LiveDataIndicator from "../components/LiveDataIndicator";
 import ControlBar from "../components/ControlBar";
 import TimeFilterDropdown from "../components/TimeFilterDropdown";
 import {
-  subscribeToSensorData,
+  getFirebaseDb,
   DEFAULT_THRESHOLDS,
   evaluateStatus,
   getLimitForTimeframe,
 } from "../services/firebaseService";
+import { ref, get, query, orderByKey, limitToLast } from "firebase/database";
 
 const TIMEFRAME_OPTIONS = [
   { value: "5m", label: "5 min", ms: 5 * 60 * 1000 },
@@ -26,14 +27,69 @@ export default function LiveMonitoring() {
   const [isOnline, setIsOnline] = useState(true);
   const [isOfflineSimulated, setIsOfflineSimulated] = useState(false);
   const [updateInterval, setUpdateInterval] = useState(5000); // 5 seconds
+  const [isLiveMode, setIsLiveMode] = useState(false); // Live mode state
   const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3000";
   const pollingRef = useRef(null);
   const lastFirebaseDataRef = useRef(null);
   const firebaseIntervalRef = useRef(null);
   const firebaseAvailableRef = useRef(false);
+  const livePollingRef = useRef(null); // For 10-second live polling
 
   // Get timeframe configuration
   const selectedTimeframe = TIMEFRAME_OPTIONS.find(t => t.value === timeframe) || TIMEFRAME_OPTIONS[1];
+
+  // Function to fetch latest data from Firebase
+  const fetchLatestData = async () => {
+    try {
+      const db = getFirebaseDb();
+      if (!db) {
+        console.warn("Firebase database not available");
+        return;
+      }
+
+      console.log("🔄 [LIVE MONITORING] Fetching latest data from Firebase /sensor_data (10s polling)");
+      const sensorRef = ref(db, "sensor_data");
+      const sensorQuery = query(sensorRef, orderByKey(), limitToLast(1));
+      const snapshot = await get(sensorQuery);
+      
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const readings = Object.entries(data).map(([key, value]) => ({ 
+          id: key, 
+          ...value 
+        }));
+        
+        if (readings.length > 0) {
+          const latestReading = readings[0];
+          const timestamp = new Date(latestReading.timestamp);
+          console.log("✅ [LIVE MONITORING] Latest data fetched:", {
+            dataPath: "/sensor_data",
+            timestamp: timestamp.toLocaleString(),
+            timestampValue: latestReading.timestamp,
+            heartRate: latestReading.heartRate,
+            spo2: latestReading.spo2,
+            bodyTemp: latestReading.bodyTemp,
+            ambientTemp: latestReading.ambientTemp,
+            accMagnitude: latestReading.accMagnitude,
+            fallDetected: latestReading.fallDetected
+          });
+          
+          // Update readings with latest data - append to existing data
+          setReadings(prev => {
+            const normalized = normalizeRecord(latestReading);
+            const smoothed = smoothReadings([normalized]);
+            const newReadings = [...prev, ...smoothed]; // Append new data
+            console.log(`📊 [LIVE MONITORING] Updated readings count: ${newReadings.length}`);
+            return newReadings;
+          });
+        }
+      } else {
+        console.log("⚠️ [LIVE MONITORING] No data available in Firebase /sensor_data");
+      }
+    } catch (error) {
+      console.error("❌ [LIVE MONITORING] Error fetching latest data:", error);
+    }
+  };
 
   // Data smoothing function
   function smoothReadings(newReadings) {
@@ -138,8 +194,39 @@ export default function LiveMonitoring() {
     };
   }
 
-  // Fetch sensor data
+  // Live mode toggle effect
   useEffect(() => {
+    if (isLiveMode) {
+      console.log("🟢 Live Monitoring started");
+      console.log("📡 [LIVE MONITORING] Data source: Firebase /sensor_data");
+      console.log("⏱️ [LIVE MONITORING] Polling interval: 10000ms (10 seconds)");
+      // Start 10-second polling
+      livePollingRef.current = setInterval(fetchLatestData, 10000);
+      // Initial fetch
+      fetchLatestData();
+    } else {
+      console.log("⏸️ Live Monitoring stopped");
+      console.log("🛑 [LIVE MONITORING] Polling interval cleared");
+      // Stop polling
+      if (livePollingRef.current) {
+        clearInterval(livePollingRef.current);
+        livePollingRef.current = null;
+      }
+    }
+
+    return () => {
+      if (livePollingRef.current) {
+        console.log("🧹 [LIVE MONITORING] Cleanup - clearing polling interval");
+        clearInterval(livePollingRef.current);
+        livePollingRef.current = null;
+      }
+    };
+  }, [isLiveMode]);
+
+  // Fetch sensor data - only when not in live mode
+  useEffect(() => {
+    if (isLiveMode) return; // Skip this effect when in live mode
+
     let unsub = null;
     
     const fetchData = async () => {
@@ -205,7 +292,26 @@ export default function LiveMonitoring() {
         firebaseIntervalRef.current = null;
       }
     };
-  }, [timeframe, updateInterval, backendUrl]);
+  }, [timeframe, updateInterval, backendUrl, isLiveMode]);
+
+  // Cleanup effect for component unmount
+  useEffect(() => {
+    return () => {
+      console.log("🧹 [CLEANUP] Live Monitoring component unmounting - cleaning up all intervals");
+      if (livePollingRef.current) {
+        clearInterval(livePollingRef.current);
+        livePollingRef.current = null;
+      }
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+      if (firebaseIntervalRef.current) {
+        clearInterval(firebaseIntervalRef.current);
+        firebaseIntervalRef.current = null;
+      }
+    };
+  }, []);
 
   // Filter visible data based on timeframe
   const now = Date.now();
@@ -282,6 +388,29 @@ export default function LiveMonitoring() {
           </div>
 
           <div className="flex items-center gap-4">
+          {/* Live Button */}
+          <button
+            onClick={() => {
+              setIsLiveMode(!isLiveMode);
+              console.log(`🔄 Live Monitoring ${!isLiveMode ? 'started' : 'stopped'}`);
+            }}
+            className={`px-6 py-3 rounded-lg text-sm font-medium transition-colors ${
+              isLiveMode
+                ? 'bg-green-500 text-white hover:bg-green-600 shadow-sm'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            {isLiveMode ? '🟢 Live (Stop)' : '▶️ Live (Start)'}
+          </button>
+
+          {isLiveMode && (
+            <div className="flex items-center gap-2 text-sm text-green-600">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="font-medium">LIVE</span>
+              <span>• Polling every 10 seconds</span>
+            </div>
+          )}
+
           <TimeFilterDropdown
             value={timeframe}
             onChange={handleTimeframeChange}
@@ -292,7 +421,7 @@ export default function LiveMonitoring() {
           <LiveDataIndicator
             isOnline={isOnline}
             lastUpdate={latest?.timestamp}
-            updateInterval={updateInterval}
+            updateInterval={isLiveMode ? 10000 : updateInterval}
           />
           
           <button className="relative p-2 text-gray-600 hover:text-gray-900">

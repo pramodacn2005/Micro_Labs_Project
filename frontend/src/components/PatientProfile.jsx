@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { useAuth } from "../contexts/AuthContext";
 
 export default function PatientProfile() {
+  const { userData, user, refreshUserData } = useAuth();
   const [isEditMode, setIsEditMode] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
   const [collapsedCards, setCollapsedCards] = useState(new Set());
@@ -12,19 +14,21 @@ export default function PatientProfile() {
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [currentPatientData, setCurrentPatientData] = useState(null);
+  const [newMedicalCondition, setNewMedicalCondition] = useState("");
+  const medicalConditionInputRef = useRef(null);
 
-  // Mock patient data
+  // Patient data using real user data from Firebase
   const patientData = {
     personalInfo: {
-      fullName: "Pramoda CN",
-      age: 65,
-      gender: "Male",
-      email: "cnpramoda@gmail.com",
-      phone: "+1 (555) 123-4567",
-      medicalConditions: ["Hypertension", "Type 2 Diabetes"],
-      healthStatus: "stable", // stable, needs_attention, critical
+      fullName: userData?.fullName || user?.displayName || "User",
+      age: userData?.age || 65,
+      gender: userData?.gender || "Male",
+      email: userData?.email || user?.email || "",
+      phone: userData?.phone || "+1 (555) 123-4567",
+      medicalConditions: userData?.medicalConditions || [],
+      healthStatus: userData?.healthStatus || "stable", // stable, needs_attention, critical
       lastVitalsCheck: new Date(Date.now() - 15 * 60 * 1000), // 15 minutes ago
-      photo: null // null means no photo, will show initials
+      photo: userData?.photo || null // null means no photo, will show initials
     },
     deviceInfo: {
       deviceId: "HM-001-A7B2C3",
@@ -118,6 +122,7 @@ export default function PatientProfile() {
       setEditableData({ ...currentPatientData.personalInfo });
       setOriginalData({ ...currentPatientData.personalInfo });
       setValidationErrors({});
+      setNewMedicalCondition(""); // Reset new condition input
     }
   }, [isEditMode, currentPatientData]);
 
@@ -189,6 +194,7 @@ export default function PatientProfile() {
       // Cancel edit mode - revert changes
       setEditableData({ ...originalData });
       setValidationErrors({});
+      setNewMedicalCondition(""); // Reset new condition input
     }
     setIsEditMode(!isEditMode);
   };
@@ -203,6 +209,97 @@ export default function PatientProfile() {
       [field]: error
     }));
   };
+
+
+  // Handle Enter key press to commit the input
+  const handleEnterKey = (field, e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const value = e.target.value;
+      handleFieldChange(field, value);
+    }
+  };
+
+  // Handle blur event to commit input when user clicks away
+  const handleInputBlur = (field, e) => {
+    const value = e.target.value;
+    handleFieldChange(field, value);
+  };
+
+  // Medical conditions management functions
+  const handleAddMedicalCondition = (inputRef) => {
+    const value = inputRef?.current?.value || '';
+    if (value.trim() === "") return;
+    
+    const currentConditions = editableData.medicalConditions || [];
+    
+    // Split by comma and clean up each condition
+    const newConditions = value
+      .split(',')
+      .map(condition => condition.trim())
+      .filter(condition => condition.length > 0);
+    
+    // Check for duplicates
+    const duplicates = newConditions.filter(condition => currentConditions.includes(condition));
+    if (duplicates.length > 0) {
+      setToastMessage(`These conditions already exist: ${duplicates.join(', ')}`);
+      setShowToast(true);
+      return;
+    }
+    
+    // Add all new conditions
+    const updatedConditions = [...currentConditions, ...newConditions];
+    setEditableData(prev => ({ ...prev, medicalConditions: updatedConditions }));
+    if (inputRef?.current) {
+      inputRef.current.value = ''; // Clear the input
+    }
+  };
+
+  const handleRemoveMedicalCondition = (conditionToRemove) => {
+    const currentConditions = editableData.medicalConditions || [];
+    const updatedConditions = currentConditions.filter(condition => condition !== conditionToRemove);
+    setEditableData(prev => ({ ...prev, medicalConditions: updatedConditions }));
+  };
+
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddMedicalCondition();
+    }
+  };
+
+  // Handle key events for medical conditions
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const value = e.target.value;
+      if (value.trim() !== '') {
+        // Split by comma and clean up each condition
+        const newConditions = value
+          .split(',')
+          .map(condition => condition.trim())
+          .filter(condition => condition.length > 0);
+        
+        if (newConditions.length > 0) {
+          const currentConditions = editableData.medicalConditions || [];
+          
+          // Check for duplicates
+          const duplicates = newConditions.filter(condition => currentConditions.includes(condition));
+          if (duplicates.length > 0) {
+            setToastMessage(`These conditions already exist: ${duplicates.join(', ')}`);
+            setShowToast(true);
+            return;
+          }
+          
+          // Add all new conditions
+          const updatedConditions = [...currentConditions, ...newConditions];
+          setEditableData(prev => ({ ...prev, medicalConditions: updatedConditions }));
+          e.target.value = ''; // Clear the input
+        }
+      }
+    }
+  };
+
 
   const handleSave = async () => {
     // Validate all fields
@@ -222,9 +319,27 @@ export default function PatientProfile() {
     setIsSaving(true);
     
     try {
-      // In a real app, this would save to Firebase/backend
-      // For now, we'll simulate the API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Import Firebase functions
+      const { getFirestore, doc, setDoc } = await import("firebase/firestore");
+      
+      if (!user?.uid) {
+        throw new Error("User not authenticated");
+      }
+      
+      // Save to Firebase Firestore
+      const firestore = getFirestore();
+      const userDocRef = doc(firestore, 'users', user.uid);
+      
+      // Prepare data to save (only include fields that exist in editableData)
+      const dataToSave = {
+        ...editableData,
+        updatedAt: new Date().toISOString()
+      };
+      
+      await setDoc(userDocRef, dataToSave, { merge: true });
+      
+      // Refresh user data in AuthContext
+      await refreshUserData();
       
       // Update the current patient data with the new values
       setCurrentPatientData(prev => ({
@@ -233,7 +348,7 @@ export default function PatientProfile() {
       }));
       
       // Log the update for debugging
-      console.log('Profile updated:', editableData);
+      console.log('Profile updated in Firebase:', dataToSave);
       
       setOriginalData({ ...editableData });
       setIsEditMode(false);
@@ -242,6 +357,7 @@ export default function PatientProfile() {
       setToastMessage("Profile updated successfully!");
       setShowToast(true);
     } catch (error) {
+      console.error('Error saving profile:', error);
       setToastMessage("Failed to update profile. Please try again.");
       setShowToast(true);
     } finally {
@@ -536,12 +652,13 @@ export default function PatientProfile() {
                       <div>
                         <input
                           type="number"
-                          value={editableData.age || ''}
-                          onChange={(e) => handleFieldChange('age', e.target.value)}
+                          defaultValue={editableData.age || ''}
+                          onKeyDown={(e) => handleEnterKey('age', e)}
+                          onBlur={(e) => handleInputBlur('age', e)}
                           className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                             validationErrors.age ? 'border-red-500' : 'border-gray-300'
                           }`}
-                          placeholder="Enter age"
+                          placeholder="Enter age and press Enter"
                         />
                         {validationErrors.age && (
                           <p className="text-red-500 text-xs mt-1">{validationErrors.age}</p>
@@ -555,8 +672,8 @@ export default function PatientProfile() {
                     <label className="text-sm font-medium text-gray-700">Gender</label>
                     {isEditMode ? (
                       <select
-                        value={editableData.gender || ''}
-                        onChange={(e) => handleFieldChange('gender', e.target.value)}
+                        defaultValue={editableData.gender || ''}
+                        onChange={(e) => handleInputBlur('gender', e)}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       >
                         <option value="Male">Male</option>
@@ -575,12 +692,13 @@ export default function PatientProfile() {
                     <div>
                       <input
                         type="email"
-                        value={editableData.email || ''}
-                        onChange={(e) => handleFieldChange('email', e.target.value)}
+                        defaultValue={editableData.email || ''}
+                        onKeyDown={(e) => handleEnterKey('email', e)}
+                        onBlur={(e) => handleInputBlur('email', e)}
                         className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                           validationErrors.email ? 'border-red-500' : 'border-gray-300'
                         }`}
-                        placeholder="Enter email"
+                        placeholder="Enter email and press Enter"
                       />
                       {validationErrors.email && (
                         <p className="text-red-500 text-xs mt-1">{validationErrors.email}</p>
@@ -597,12 +715,13 @@ export default function PatientProfile() {
                     <div>
                       <input
                         type="tel"
-                        value={editableData.phone || ''}
-                        onChange={(e) => handleFieldChange('phone', e.target.value)}
+                        defaultValue={editableData.phone || ''}
+                        onKeyDown={(e) => handleEnterKey('phone', e)}
+                        onBlur={(e) => handleInputBlur('phone', e)}
                         className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
                           validationErrors.phone ? 'border-red-500' : 'border-gray-300'
                         }`}
-                        placeholder="Enter phone number"
+                        placeholder="Enter phone number and press Enter"
                       />
                       {validationErrors.phone && (
                         <p className="text-red-500 text-xs mt-1">{validationErrors.phone}</p>
@@ -618,10 +737,11 @@ export default function PatientProfile() {
                   {isEditMode ? (
                     <input
                       type="text"
-                      value={editableData.fullName || ''}
-                      onChange={(e) => handleFieldChange('fullName', e.target.value)}
+                      defaultValue={editableData.fullName || ''}
+                      onKeyDown={(e) => handleEnterKey('fullName', e)}
+                      onBlur={(e) => handleInputBlur('fullName', e)}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      placeholder="Enter full name"
+                      placeholder="Enter full name and press Enter"
                     />
                   ) : (
                     <p className="text-gray-900">{currentPatientData?.personalInfo.fullName || patientData.personalInfo.fullName}</p>
@@ -630,13 +750,70 @@ export default function PatientProfile() {
                 
                 <div>
                   <label className="text-sm font-medium text-gray-700">Medical Conditions</label>
-                  <div className="flex flex-wrap gap-2 mt-1">
-                    {(currentPatientData?.personalInfo.medicalConditions || patientData.personalInfo.medicalConditions).map((condition, index) => (
-                      <span key={index} className="px-3 py-1 bg-red-100 text-red-800 rounded-full text-sm">
-                        {condition}
-                      </span>
-                    ))}
-                  </div>
+                  {isEditMode ? (
+                    <div className="mt-2">
+                      {/* Display current conditions with remove buttons */}
+                      <div className="mb-3">
+                        {(editableData.medicalConditions || []).length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {(editableData.medicalConditions || []).map((condition, index) => (
+                              <span key={index} className="px-3 py-1 bg-red-100 text-red-800 rounded-full text-sm flex items-center space-x-2">
+                                <span>{condition}</span>
+                                <button
+                                  onClick={() => handleRemoveMedicalCondition(condition)}
+                                  className="text-red-600 hover:text-red-800 font-bold"
+                                  title="Remove condition"
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-gray-500 text-sm italic">No medical conditions added yet</p>
+                        )}
+                      </div>
+                      
+                      {/* Add new condition input */}
+                      <div>
+                        <div className="flex space-x-2">
+                          <input
+                            ref={medicalConditionInputRef}
+                            type="text"
+                            defaultValue=""
+                            onKeyPress={handleKeyPress}
+                            onKeyDown={handleKeyDown}
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            placeholder="Type conditions and press Enter to add them"
+                          />
+                          <button
+                            onClick={() => handleAddMedicalCondition(medicalConditionInputRef)}
+                            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center space-x-1"
+                          >
+                            <span>+</span>
+                            <span>Add</span>
+                          </button>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          💡 Type conditions separated by commas and press Enter to add them all at once.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-1">
+                      {(currentPatientData?.personalInfo.medicalConditions || patientData.personalInfo.medicalConditions).length > 0 ? (
+                        <div className="flex flex-wrap gap-2">
+                          {(currentPatientData?.personalInfo.medicalConditions || patientData.personalInfo.medicalConditions).map((condition, index) => (
+                            <span key={index} className="px-3 py-1 bg-red-100 text-red-800 rounded-full text-sm">
+                              {condition}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-gray-500 text-sm italic">No medical conditions recorded</p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 

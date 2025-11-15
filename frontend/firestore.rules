@@ -9,15 +9,40 @@ service cloud.firestore {
     // Patient files - users can only access their own files
     match /patient-files/{fileId} {
       allow read, write, delete: if request.auth != null && 
-        resource.data.patientName == request.auth.token.email;
+        resource.data.userId == request.auth.uid;
       allow create: if request.auth != null && 
-        request.resource.data.patientName == request.auth.token.email;
+        request.resource.data.userId == request.auth.uid;
     }
     
     // Sensor data - read-only for authenticated users
     match /sensor_data/{dataId} {
       allow read: if request.auth != null;
       allow write: if false; // Only backend can write sensor data
+    }
+    
+    // Doctors - public read for authenticated users, write only by admin/backend
+    match /doctors/{doctorId} {
+      allow read: if request.auth != null;
+      allow write: if false; // Only backend/admin can write
+    }
+    
+    // Appointments - users can read their own appointments, create new ones
+    match /appointments/{appointmentId} {
+      allow read: if request.auth != null && 
+        (resource.data.patient_id == request.auth.uid || 
+         resource.data.doctor_id == request.auth.uid);
+      allow create: if request.auth != null && 
+        request.resource.data.patient_id == request.auth.uid;
+      allow update: if request.auth != null && 
+        (resource.data.patient_id == request.auth.uid || 
+         resource.data.doctor_id == request.auth.uid);
+      allow delete: if false; // Soft delete only via backend
+    }
+    
+    // Doctor availability - read by authenticated users, write only by doctor/backend
+    match /doctor_availability/{availabilityId} {
+      allow read: if request.auth != null;
+      allow write: if false; // Only backend can write
     }
     
     // Default deny all other documents

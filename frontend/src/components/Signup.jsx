@@ -9,6 +9,7 @@ export default function Signup() {
     password: '',
     confirmPassword: '',
     phone: '',
+    role: 'patient', // Default role
     acceptTerms: false
   });
   const [errors, setErrors] = useState({});
@@ -73,6 +74,10 @@ export default function Signup() {
       newErrors.phone = 'Please enter a valid phone number';
     }
 
+    if (!formData.role) {
+      newErrors.role = 'Please select your role';
+    }
+
     if (!formData.acceptTerms) {
       newErrors.acceptTerms = 'You must accept the terms and conditions';
     }
@@ -94,7 +99,8 @@ export default function Signup() {
         formData.email, 
         formData.password, 
         formData.fullName.trim(),
-        formData.phone || null
+        formData.phone || null,
+        formData.role
       );
       
       if (result.success) {
@@ -223,6 +229,33 @@ export default function Signup() {
                 {errors.phone && (
                   <p className="mt-1 text-sm text-red-600">{errors.phone}</p>
                 )}
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="role" className="block text-sm font-medium text-gray-700">
+                I am a <span className="text-red-500">*</span>
+              </label>
+              <div className="mt-1">
+                <select
+                  id="role"
+                  name="role"
+                  value={formData.role}
+                  onChange={handleInputChange}
+                  className={`appearance-none block w-full px-3 py-2 border rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm ${
+                    errors.role ? 'border-red-300' : 'border-gray-300'
+                  }`}
+                >
+                  <option value="patient">Patient</option>
+                  <option value="doctor">Doctor</option>
+                  <option value="admin">Admin</option>
+                </select>
+                {errors.role && (
+                  <p className="mt-1 text-sm text-red-600">{errors.role}</p>
+                )}
+                <p className="mt-1 text-xs text-gray-500">
+                  Select your role to access the appropriate features
+                </p>
               </div>
             </div>
 

@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { logout } from "../services/firebaseService";
 import { designTokens } from "../config/designTokens";
 
 export default function Sidebar({ 
@@ -10,30 +9,55 @@ export default function Sidebar({
   onNavigate 
 }) {
   const [isCollapsed, setIsCollapsed] = useState(!expanded);
-  const { user, userData, isAuthenticated } = useAuth();
+  const { isAuthenticated, userData } = useAuth();
 
-  const handleLogout = async () => {
-    try {
-      await logout();
-      // The auth state will be updated automatically by the context
-    } catch (error) {
-      console.error('Logout error:', error);
-    }
-  };
+  // Get user role
+  const userRole = userData?.role || 'patient';
 
-  const getInitials = (name) => {
-    if (!name) return 'U';
-    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-  };
-
-  const navigationItems = isAuthenticated ? [
+  // Base navigation items for all users
+  const baseItems = [
     { id: "dashboard", icon: "🏠", label: "Dashboard" },
+    { id: "profile", icon: "👤", label: "Profile" }
+    // Temporarily removed: { id: "settings", icon: "⚙️", label: "Settings" },
+  ];
+
+  // Patient-specific items
+  const patientItems = [
     { id: "live-monitoring", icon: "📡", label: "Live Monitoring" },
-    { id: "alerts", icon: "🔔", label: "Alerts", badge: alertsCount },
-    { id: "profile", icon: "👤", label: "Profile" },
-    { id: "settings", icon: "⚙️", label: "Settings" },
+    { id: "medicine-reminder", icon: "💊", label: "Medicine Reminder" },
+    // Temporarily removed: { id: "alerts", icon: "🔔", label: "Alerts", badge: alertsCount },
+    { id: "fever-checker", icon: "🌡️", label: "Fever Checker" },
+    { id: "ai-assistant", icon: "🤖", label: "AI Assistant" },
+    { id: "doctor-list", icon: "🩺", label: "Find Doctors" },
+    { id: "my-appointments", icon: "📅", label: "My Appointments" },
     { id: "history", icon: "🕓", label: "History" }
-  ] : [];
+  ];
+
+  // Doctor-specific items
+  const doctorItems = [
+    { id: "doctor-dashboard", icon: "👨‍⚕️", label: "Doctor Dashboard" },
+    { id: "live-monitoring", icon: "📡", label: "Live Monitoring" }
+  ];
+
+  // Admin-specific items
+  const adminItems = [
+    { id: "admin-dashboard", icon: "👨‍💼", label: "Admin Dashboard" }
+  ];
+
+  // Build navigation items based on role
+  let navigationItems = [];
+  if (isAuthenticated) {
+    navigationItems = [...baseItems];
+    
+    if (userRole === 'admin') {
+      navigationItems.push(...adminItems);
+    } else if (userRole === 'doctor') {
+      navigationItems.push(...doctorItems);
+    } else {
+      // Patient or default
+      navigationItems.push(...patientItems);
+    }
+  }
 
   const Item = ({ item, active }) => (
     <button
@@ -105,45 +129,6 @@ export default function Sidebar({
         ))}
       </nav>
 
-      {/* User Profile or Sign In */}
-      <div className={`border-t border-gray-200 p-3 ${isCollapsed ? "flex justify-center" : ""}`}>
-        {isAuthenticated ? (
-          <div className="space-y-2">
-            <div className={`flex items-center gap-3 rounded-lg bg-gray-50 p-3 ${isCollapsed ? "justify-center" : ""}`}>
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-100 text-xs font-medium text-primary-700">
-                {getInitials(userData?.fullName || user?.displayName || user?.email)}
-              </div>
-              {!isCollapsed && (
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-medium text-gray-900">
-                    {userData?.fullName || user?.displayName || 'User'}
-                  </div>
-                  <div className="truncate text-[11px] text-gray-500">
-                    {user?.email}
-                  </div>
-                </div>
-              )}
-            </div>
-            <button
-              onClick={handleLogout}
-              className={`w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors ${isCollapsed ? "justify-center" : ""}`}
-            >
-              <span className="text-lg">🚪</span>
-              {!isCollapsed && <span>Logout</span>}
-            </button>
-          </div>
-        ) : (
-          <div className={`${isCollapsed ? "flex justify-center" : ""}`}>
-            <button
-              onClick={() => onNavigate?.('login')}
-              className={`w-full flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 transition-colors ${isCollapsed ? "justify-center" : ""}`}
-            >
-              <span className="text-lg">🔑</span>
-              {!isCollapsed && <span>Sign In</span>}
-            </button>
-          </div>
-        )}
-      </div>
     </aside>
   );
 }

@@ -26,13 +26,16 @@ export function AuthProvider({ children }) {
         // Fetch additional user data from Firestore
         const userDataResult = await getUserData(firebaseUser.uid);
         if (userDataResult.success) {
-          setUserData(userDataResult.data);
+          const data = userDataResult.data;
+          // Keep role as-is (don't set default here, let RoleSelector handle it)
+          setUserData(data);
         } else {
           console.error('Failed to fetch user data:', userDataResult.error);
           setUserData({
             fullName: firebaseUser.displayName || 'User',
             email: firebaseUser.email,
             phone: null
+            // Don't set role here - let RoleSelector prompt user
           });
         }
       } else {
@@ -45,11 +48,21 @@ export function AuthProvider({ children }) {
     return () => unsubscribe();
   }, []);
 
+  const refreshUserData = async () => {
+    if (user) {
+      const userDataResult = await getUserData(user.uid);
+      if (userDataResult.success) {
+        setUserData(userDataResult.data);
+      }
+    }
+  };
+
   const value = {
     user,
     userData,
     loading,
-    isAuthenticated: !!user
+    isAuthenticated: !!user,
+    refreshUserData
   };
 
   return (

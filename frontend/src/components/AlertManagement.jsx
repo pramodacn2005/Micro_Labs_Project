@@ -1,5 +1,12 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { designTokens } from "../config/designTokens";
+import {
+  getFirebaseDb,
+  checkEmergencyThresholds,
+  DEFAULT_THRESHOLDS,
+  evaluateStatus,
+} from "../services/firebaseService";
+import { ref, get, query, orderByKey, limitToLast } from "firebase/database";
 
 export default function AlertManagement() {
   const [alerts, setAlerts] = useState([]);
@@ -12,6 +19,132 @@ export default function AlertManagement() {
   const [isRealTime, setIsRealTime] = useState(true);
   const [expandedAlerts, setExpandedAlerts] = useState(new Set());
   const [isMobile, setIsMobile] = useState(false);
+  const [liveData, setLiveData] = useState([]);
+  const [lastUpdateTime, setLastUpdateTime] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const livePollingRef = useRef(null);
+
+  // Function to fetch latest data from Firebase
+  const fetchLatestData = async () => {
+    try {
+      const db = getFirebaseDb();
+      if (!db) {
+        console.warn("Firebase database not available");
+        return;
+      }
+
+      console.log("🔄 [ALERT MANAGEMENT] Fetching latest data from Firebase /sensor_data");
+      const sensorRef = ref(db, "sensor_data");
+      const sensorQuery = query(sensorRef, orderByKey(), limitToLast(10));
+      const snapshot = await get(sensorQuery);
+      
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const readings = Object.entries(data).map(([key, value]) => ({ 
+          id: key, 
+          ...value 
+        }));
+        
+        if (readings.length > 0) {
+          console.log("✅ [ALERT MANAGEMENT] Received", readings.length, "readings from Firebase");
+          setLiveData(readings);
+          setLastUpdateTime(Date.now());
+          setIsLoading(false);
+          
+          // Generate alerts from live data
+          generateAlertsFromLiveData(readings);
+        }
+      } else {
+        console.log("⚠️ [ALERT MANAGEMENT] No data available in Firebase /sensor_data");
+        setIsLoading(false);
+      }
+    } catch (error) {
+      console.error("❌ [ALERT MANAGEMENT] Error fetching latest data:", error);
+      setIsLoading(false);
+    }
+  };
+
+  // Function to generate alerts from live data
+  const generateAlertsFromLiveData = (readings) => {
+    const newAlerts = [];
+    
+    readings.forEach((reading, index) => {
+      // Check for emergency thresholds
+      const emergencyAlerts = checkEmergencyThresholds(reading);
+      
+      emergencyAlerts.forEach(alert => {
+        const alertId = `${reading.id}_${alert.parameter}_${Date.now()}`;
+        
+        newAlerts.push({
+          id: alertId,
+          patientName: "Patient", // You can get this from user context
+          patientId: "P001",
+          alertType: alert.parameter,
+          severity: alert.severity,
+          status: "new",
+          timeTriggered: new Date(reading.timestamp || Date.now()),
+          currentValue: `${alert.value}${alert.unit}`,
+          deviceId: reading.deviceId || "SENSOR-001",
+          location: "Room 101",
+          lastReadings: readings.slice(0, 3).map(r => {
+            const value = r[alert.parameter.toLowerCase().replace(/\s+/g, '')] || r[alert.parameter];
+            return `${value}${alert.unit}`;
+          }),
+          trend: "stable",
+          originalReading: reading
+        });
+      });
+      
+      // Check for other alert conditions
+      const hrStatus = evaluateStatus(Number(reading.heartRate), DEFAULT_THRESHOLDS.heartRate);
+      const spo2Status = evaluateStatus(Number(reading.spo2), DEFAULT_THRESHOLDS.spo2);
+      const tempStatus = evaluateStatus(Number(reading.bodyTemp), DEFAULT_THRESHOLDS.bodyTemp);
+      
+      // Add warning alerts for non-critical but concerning values
+      if (hrStatus === "warning") {
+        newAlerts.push({
+          id: `hr_warning_${reading.id}_${Date.now()}`,
+          patientName: "Patient",
+          patientId: "P001",
+          alertType: "Heart Rate",
+          severity: "high",
+          status: "new",
+          timeTriggered: new Date(reading.timestamp || Date.now()),
+          currentValue: `${reading.heartRate} BPM`,
+          deviceId: reading.deviceId || "SENSOR-001",
+          location: "Room 101",
+          lastReadings: readings.slice(0, 3).map(r => `${r.heartRate || '--'} BPM`),
+          trend: "stable",
+          originalReading: reading
+        });
+      }
+      
+      if (spo2Status === "warning") {
+        newAlerts.push({
+          id: `spo2_warning_${reading.id}_${Date.now()}`,
+          patientName: "Patient",
+          patientId: "P001",
+          alertType: "SpO2",
+          severity: "high",
+          status: "new",
+          timeTriggered: new Date(reading.timestamp || Date.now()),
+          currentValue: `${reading.spo2}%`,
+          deviceId: reading.deviceId || "SENSOR-001",
+          location: "Room 101",
+          lastReadings: readings.slice(0, 3).map(r => `${r.spo2 || '--'}%`),
+          trend: "stable",
+          originalReading: reading
+        });
+      }
+    });
+    
+    // Update alerts with new ones (avoid duplicates)
+    setAlerts(prev => {
+      const existingIds = new Set(prev.map(a => a.id));
+      const uniqueNewAlerts = newAlerts.filter(alert => !existingIds.has(alert.id));
+      return [...prev, ...uniqueNewAlerts].slice(-50); // Keep last 50 alerts
+    });
+  };
 
   // Mock data - in real app, this would come from API
   const mockAlerts = [
@@ -73,17 +206,33 @@ export default function AlertManagement() {
     }
   ];
 
-  // Mock summary data with trends
+  // Calculate summary data from real alerts
   const summaryData = {
-    active: { count: 3, trend: "up", change: "+1" },
-    critical: { count: 1, trend: "down", change: "-1" },
-    acknowledged: { count: 1, trend: "stable", change: "0" },
-    resolved: { count: 1, trend: "up", change: "+1" }
+    active: { 
+      count: alerts.filter(a => a.status === "new" || a.status === "acknowledged").length, 
+      trend: "up", 
+      change: "+0" 
+    },
+    critical: { 
+      count: alerts.filter(a => a.severity === "critical").length, 
+      trend: "stable", 
+      change: "0" 
+    },
+    acknowledged: { 
+      count: alerts.filter(a => a.status === "acknowledged").length, 
+      trend: "stable", 
+      change: "0" 
+    },
+    resolved: { 
+      count: alerts.filter(a => a.status === "resolved").length, 
+      trend: "up", 
+      change: "+0" 
+    }
   };
 
   useEffect(() => {
-    setAlerts(mockAlerts);
-    setFilteredAlerts(mockAlerts);
+    // Initial data fetch
+    fetchLatestData();
     
     // Check if mobile on mount and resize
     const checkMobile = () => {
@@ -94,6 +243,43 @@ export default function AlertManagement() {
     window.addEventListener('resize', checkMobile);
     
     return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Real-time data fetching effect
+  useEffect(() => {
+    if (isRealTime) {
+      console.log("🔄 [ALERT MANAGEMENT] Starting live data polling every 10 seconds");
+      
+      // Start polling
+      livePollingRef.current = setInterval(() => {
+        fetchLatestData();
+      }, 10000);
+      
+      return () => {
+        if (livePollingRef.current) {
+          console.log("⏹️ [ALERT MANAGEMENT] Stopping live data polling");
+          clearInterval(livePollingRef.current);
+          livePollingRef.current = null;
+        }
+      };
+    } else {
+      // Stop polling when real-time is disabled
+      if (livePollingRef.current) {
+        console.log("⏹️ [ALERT MANAGEMENT] Stopping live data polling");
+        clearInterval(livePollingRef.current);
+        livePollingRef.current = null;
+      }
+    }
+  }, [isRealTime]);
+
+  // Cleanup effect
+  useEffect(() => {
+    return () => {
+      if (livePollingRef.current) {
+        clearInterval(livePollingRef.current);
+        livePollingRef.current = null;
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -226,6 +412,21 @@ export default function AlertManagement() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Alert Management</h1>
           <p className="text-gray-600">Monitor and respond to patient alerts</p>
+          {isRealTime && lastUpdateTime && (
+            <div className="flex items-center space-x-2 mt-2">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="text-sm text-green-600 font-medium">LIVE</span>
+              <span className="text-xs text-gray-500">
+                Last updated: {new Date(lastUpdateTime).toLocaleTimeString()}
+              </span>
+            </div>
+          )}
+          {isLoading && (
+            <div className="flex items-center space-x-2 mt-2">
+              <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+              <span className="text-sm text-blue-600 font-medium">Loading...</span>
+            </div>
+          )}
         </div>
         
         {/* Filters */}
@@ -278,10 +479,47 @@ export default function AlertManagement() {
               <span className="text-sm font-medium">
                 {isRealTime ? "Live" : "Paused"}
               </span>
+              {isRealTime && (
+                <span className="text-xs text-green-600">
+                  (10s)
+                </span>
+              )}
             </span>
           </button>
         </div>
       </div>
+
+      {/* Live Data Section */}
+      {liveData.length > 0 && (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Current Sensor Readings</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {liveData.slice(0, 1).map((reading, index) => (
+              <div key={index} className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-600">Heart Rate</span>
+                  <span className="text-lg font-bold text-gray-900">{reading.heartRate || '--'} BPM</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-600">SpO2</span>
+                  <span className="text-lg font-bold text-gray-900">{reading.spo2 || '--'}%</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-600">Body Temp</span>
+                  <span className="text-lg font-bold text-gray-900">{reading.bodyTemp || '--'}°C</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-gray-600">Fall Detected</span>
+                  <span className="text-lg font-bold text-gray-900">{reading.fallDetected ? 'Yes' : 'No'}</span>
+                </div>
+                <div className="text-xs text-gray-500 mt-2">
+                  Updated: {new Date(reading.timestamp || Date.now()).toLocaleTimeString()}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
