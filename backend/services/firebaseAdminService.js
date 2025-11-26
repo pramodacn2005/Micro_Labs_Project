@@ -7,19 +7,43 @@ import path from "path";
 import dotenv from "dotenv";
 dotenv.config();
 
+const loadServiceAccount = () => {
+  const fromEnv = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (fromEnv) {
+    try {
+      // Allow either raw JSON or base64 encoded JSON in the env var
+      const raw =
+        fromEnv.trim().startsWith("{")
+          ? fromEnv
+          : Buffer.from(fromEnv, "base64").toString("utf8");
+      const parsed = JSON.parse(raw);
+      console.log("[Firebase Admin] ✅ Loaded service account from FIREBASE_SERVICE_ACCOUNT env var");
+      return parsed;
+    } catch (err) {
+      console.error("[Firebase Admin] ❌ Failed to parse FIREBASE_SERVICE_ACCOUNT env var");
+      throw err;
+    }
+  }
+
+  const serviceAccountPath =
+    process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+    path.join(process.cwd(), "config", "serviceAccountKey.json");
+
+  if (!fs.existsSync(serviceAccountPath)) {
+    console.error(`[Firebase Admin] Service account file not found at: ${serviceAccountPath}`);
+    throw new Error(
+      "Service account credentials not found. Provide FIREBASE_SERVICE_ACCOUNT or GOOGLE_APPLICATION_CREDENTIALS"
+    );
+  }
+
+  console.log(`[Firebase Admin] ✅ Loaded service account from file: ${serviceAccountPath}`);
+  return JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
+};
+
 // Initialize Firebase Admin SDK
 if (!admin.apps.length) {
   try {
-    // Try to get service account path from env or use default location
-    const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || 
-                               path.join(process.cwd(), "config", "serviceAccountKey.json");
-    
-    if (!fs.existsSync(serviceAccountPath)) {
-      console.error(`[Firebase Admin] Service account file not found at: ${serviceAccountPath}`);
-      throw new Error(`Service account file not found. Please set GOOGLE_APPLICATION_CREDENTIALS in .env`);
-    }
-    
-    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
+    const serviceAccount = loadServiceAccount();
     
     // Determine storage bucket name (project-id.appspot.com format)
     const storageBucket = process.env.FIREBASE_STORAGE_BUCKET || `${serviceAccount.project_id}.appspot.com`;
