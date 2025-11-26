@@ -4,12 +4,29 @@ import { getStorage } from "firebase/storage";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, sendPasswordResetEmail, sendEmailVerification, onAuthStateChanged } from "firebase/auth";
 import { getFirestore as getFirestoreDB, doc, setDoc, getDoc } from "firebase/firestore";
 
+// Get storage bucket name and fix if it's in wrong format
+let storageBucket = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET;
+if (storageBucket && storageBucket.includes('firebasestorage.app')) {
+  // Convert from firebasestorage.app format to appspot.com format
+  const projectId = storageBucket.split('.firebasestorage.app')[0];
+  storageBucket = `${projectId}.appspot.com`;
+  console.warn('⚠️ Fixed storage bucket name from firebasestorage.app to appspot.com format');
+  console.warn(`   Old: ${import.meta.env.VITE_FIREBASE_STORAGE_BUCKET}`);
+  console.warn(`   New: ${storageBucket}`);
+  console.warn('💡 Update your .env file: VITE_FIREBASE_STORAGE_BUCKET=' + storageBucket);
+} else if (!storageBucket && import.meta.env.VITE_FIREBASE_PROJECT_ID) {
+  // Default to appspot.com format if not set
+  storageBucket = `${import.meta.env.VITE_FIREBASE_PROJECT_ID}.appspot.com`;
+  console.warn('⚠️ Storage bucket not set, using default:', storageBucket);
+  console.warn('💡 Add to your .env file: VITE_FIREBASE_STORAGE_BUCKET=' + storageBucket);
+}
+
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  storageBucket: storageBucket,
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
@@ -135,14 +152,139 @@ export const DEFAULT_THRESHOLDS = {
   spo2: { min: 95, max: 100, unit: "%" },
   bodyTemp: { min: 36.1, max: 37.2, unit: "°C" },
   ambientTemp: { min: -10, max: 50, unit: "°C" },
-  accMagnitude: { min: 0, max: 3, unit: "g" }
+  accMagnitude: { min: 0, max: 3, unit: "g" },
+  bloodSugar: { min: 70, max: 100, unit: "mg/dL" }, // Fasting glucose normal range
+  bloodPressureSystolic: { min: 90, max: 120, unit: "mmHg" },
+  bloodPressureDiastolic: { min: 60, max: 80, unit: "mmHg" }
 };
+
+export function convertAgeToYears(rawAge) {
+  if (rawAge === null || rawAge === undefined) return null;
+  if (typeof rawAge === "number" && Number.isFinite(rawAge)) return rawAge;
+  if (typeof rawAge === "string") {
+    const trimmed = rawAge.trim();
+    if (!trimmed) return null;
+    const lower = trimmed.toLowerCase();
+    const monthsMatch = lower.match(/(\d+(\.\d+)?)\s*(month|months|mo)\b/);
+    if (monthsMatch) {
+      return Number(monthsMatch[1]) / 12;
+    }
+    const yearsMatch = lower.match(/(\d+(\.\d+)?)/);
+    if (yearsMatch) {
+      return Number(yearsMatch[1]);
+    }
+  }
+  return null;
+}
+
+export const AGE_GROUP_THRESHOLDS = [
+  {
+    label: "Infant (0-1 yr)",
+    minAge: 0,
+    maxAge: 1,
+    thresholds: {
+      heartRate: { min: 100, max: 160, unit: "bpm" },
+      spo2: { min: 94, max: 100, unit: "%" },
+      bodyTemp: { min: 36.5, max: 37.5, unit: "°C" },
+      bloodSugar: { min: 70, max: 150, unit: "mg/dL" },
+      bloodPressureSystolic: { min: 70, max: 100, unit: "mmHg" },
+      bloodPressureDiastolic: { min: 50, max: 65, unit: "mmHg" }
+    }
+  },
+  {
+    label: "Toddler (1-5 yrs)",
+    minAge: 1,
+    maxAge: 6,
+    thresholds: {
+      heartRate: { min: 80, max: 130, unit: "bpm" },
+      spo2: { min: 95, max: 100, unit: "%" },
+      bodyTemp: { min: 36.4, max: 37.4, unit: "°C" },
+      bloodSugar: { min: 70, max: 140, unit: "mg/dL" },
+      bloodPressureSystolic: { min: 80, max: 110, unit: "mmHg" },
+      bloodPressureDiastolic: { min: 55, max: 75, unit: "mmHg" }
+    }
+  },
+  {
+    label: "Child (6-12 yrs)",
+    minAge: 6,
+    maxAge: 13,
+    thresholds: {
+      heartRate: { min: 70, max: 110, unit: "bpm" },
+      spo2: { min: 95, max: 100, unit: "%" },
+      bodyTemp: { min: 36.3, max: 37.3, unit: "°C" },
+      bloodSugar: { min: 70, max: 130, unit: "mg/dL" },
+      bloodPressureSystolic: { min: 90, max: 115, unit: "mmHg" },
+      bloodPressureDiastolic: { min: 60, max: 75, unit: "mmHg" }
+    }
+  },
+  {
+    label: "Teen (13-17 yrs)",
+    minAge: 13,
+    maxAge: 18,
+    thresholds: {
+      heartRate: { min: 60, max: 105, unit: "bpm" },
+      spo2: { min: 95, max: 100, unit: "%" },
+      bodyTemp: { min: 36.1, max: 37.3, unit: "°C" },
+      bloodSugar: { min: 70, max: 120, unit: "mg/dL" },
+      bloodPressureSystolic: { min: 100, max: 125, unit: "mmHg" },
+      bloodPressureDiastolic: { min: 65, max: 80, unit: "mmHg" }
+    }
+  },
+  {
+    label: "Adult (18-64 yrs)",
+    minAge: 18,
+    maxAge: 65,
+    thresholds: {
+      ...DEFAULT_THRESHOLDS
+    }
+  },
+  {
+    label: "Senior (65+ yrs)",
+    minAge: 65,
+    maxAge: null,
+    thresholds: {
+      heartRate: { min: 55, max: 95, unit: "bpm" },
+      spo2: { min: 94, max: 100, unit: "%" },
+      bodyTemp: { min: 36.0, max: 37.2, unit: "°C" },
+      bloodSugar: { min: 75, max: 130, unit: "mg/dL" },
+      bloodPressureSystolic: { min: 110, max: 140, unit: "mmHg" },
+      bloodPressureDiastolic: { min: 70, max: 90, unit: "mmHg" }
+    }
+  }
+];
+
+const findAgeGroup = (age) => {
+  if (!Number.isFinite(age) || age < 0) return null;
+  return AGE_GROUP_THRESHOLDS.find(group => {
+    const withinLowerBound = age >= group.minAge;
+    const withinUpperBound = group.maxAge === null ? true : age < group.maxAge;
+    return withinLowerBound && withinUpperBound;
+  }) || null;
+};
+
+export function getAgeGroupInfo(age) {
+  return findAgeGroup(age);
+}
+
+export function getAgeAdjustedThresholds(age) {
+  const group = findAgeGroup(age);
+  if (!group) {
+    return { ...DEFAULT_THRESHOLDS };
+  }
+  return {
+    ...DEFAULT_THRESHOLDS,
+    ...group.thresholds
+  };
+}
 
 // Emergency Alert Thresholds - More strict for emergency alerts
 export const EMERGENCY_THRESHOLDS = {
   heartRate: { min: 50, max: 120, unit: "bpm" },
   spo2: { min: 90, max: 100, unit: "%" },
   bodyTemp: { min: 35, max: 38, unit: "°C" },
+  bloodSugar: { min: 70, max: 250, unit: "mg/dL" }, // Critical: <70 (hypoglycemia) or >250 (severe hyperglycemia)
+  bloodPressureSystolic: { min: 90, max: 140, unit: "mmHg" }, // Critical: <90 (hypotension) or >140 (hypertension)
+  bloodPressureDiastolic: { min: 60, max: 90, unit: "mmHg" }, // Critical: <60 (hypotension) or >90 (hypertension)
   fallDetected: { critical: true, unit: "boolean" }
 };
 
@@ -160,65 +302,73 @@ export function evaluateStatus(value, { min, max }) {
 }
 
 // Emergency alert checking functions
-export function checkEmergencyThresholds(reading) {
+export function checkEmergencyThresholds(reading, ageYears = null) {
   const alerts = [];
+  const adjusted = getAgeAdjustedThresholds(ageYears);
+  const getRange = (key) => {
+    const base = adjusted?.[key] || DEFAULT_THRESHOLDS[key];
+    if (!base) return null;
+    const adultBase = DEFAULT_THRESHOLDS[key];
+    const emergency = EMERGENCY_THRESHOLDS[key];
+    const marginPercent = 0.15;
+    
+    const computeMin = () => {
+      if (base.min === undefined) return undefined;
+      if (adultBase?.min !== undefined && emergency?.min !== undefined) {
+        const margin = adultBase.min - emergency.min;
+        return Math.max(0, Number((base.min - margin).toFixed(1)));
+      }
+      return Math.max(0, Number((base.min * (1 - marginPercent)).toFixed(1)));
+    };
+    
+    const computeMax = () => {
+      if (base.max === undefined) return undefined;
+      if (adultBase?.max !== undefined && emergency?.max !== undefined) {
+        const margin = emergency.max - adultBase.max;
+        return Number((base.max + margin).toFixed(1));
+      }
+      return Number((base.max * (1 + marginPercent)).toFixed(1));
+    };
+    
+    return {
+      min: computeMin(),
+      max: computeMax(),
+      unit: base.unit || emergency?.unit || ""
+    };
+  };
   
-  // Heart Rate: <50 or >120
-  if (reading.heartRate !== null && reading.heartRate !== undefined) {
-    if (reading.heartRate < 50) {
-      alerts.push({
-        parameter: 'Heart Rate',
-        value: reading.heartRate,
-        threshold: '<50',
-        unit: 'BPM',
-        severity: 'critical'
-      });
-    } else if (reading.heartRate > 120) {
-      alerts.push({
-        parameter: 'Heart Rate',
-        value: reading.heartRate,
-        threshold: '>120',
-        unit: 'BPM',
-        severity: 'critical'
-      });
-    }
-  }
+  const pushAlert = (parameter, value, threshold, unit = "", severity = "critical") => {
+    alerts.push({
+      parameter,
+      value,
+      threshold,
+      unit,
+      severity
+    });
+  };
   
-  // SpO2: <90
-  if (reading.spo2 !== null && reading.spo2 !== undefined) {
-    if (reading.spo2 < 90) {
-      alerts.push({
-        parameter: 'SpO2',
-        value: reading.spo2,
-        threshold: '<90',
-        unit: '%',
-        severity: 'critical'
-      });
+  const evaluateRange = (value, key, label) => {
+    const range = getRange(key);
+    if (!range || value === null || value === undefined) return;
+    if (range.min !== undefined && value < range.min) {
+      pushAlert(label, value, `<${range.min}`, range.unit);
+    } else if (range.max !== undefined && value > range.max) {
+      pushAlert(label, value, `>${range.max}`, range.unit);
     }
-  }
+  };
   
-  // Body Temp: >38°C
-  if (reading.bodyTemp !== null && reading.bodyTemp !== undefined) {
-    if (reading.bodyTemp > 38) {
-      alerts.push({
-        parameter: 'Body Temperature',
-        value: reading.bodyTemp,
-        threshold: '>38',
-        unit: '°C',
-        severity: 'critical'
-      });
-    }
-  }
+  evaluateRange(reading.heartRate, "heartRate", "Heart Rate");
+  evaluateRange(reading.spo2, "spo2", "SpO2");
+  evaluateRange(reading.bodyTemp, "bodyTemp", "Body Temperature");
+  evaluateRange(reading.bloodSugar, "bloodSugar", "Blood Sugar");
+  evaluateRange(reading.ambientTemp, "ambientTemp", "Ambient Temperature");
+  evaluateRange(reading.accMagnitude, "accMagnitude", "Acceleration");
+  evaluateRange(reading.bloodPressureSystolic, "bloodPressureSystolic", "Blood Pressure (Systolic)");
+  evaluateRange(reading.bloodPressureDiastolic, "bloodPressureDiastolic", "Blood Pressure (Diastolic)");
   
   // Fall Detected: true
   if (reading.fallDetected === true) {
-    alerts.push({
-      parameter: 'Fall Detection',
-      value: 'Detected',
-      threshold: 'true',
-      unit: '',
-      severity: 'critical'
-    });
+    pushAlert("Fall Detection", "Detected", "true", "", "critical");
   }
   
   return alerts;

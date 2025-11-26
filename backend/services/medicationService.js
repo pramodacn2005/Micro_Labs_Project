@@ -169,4 +169,138 @@ function getAgeBasedDosage(medEntry, ageBand) {
   return entry.ages[ageBand].dosing_guidance || "Consult clinician";
 }
 
+function getMedicationById(id, age) {
+  const meds = loadMedicationConfig();
+  const entry = meds.find((med) => med.id === id);
+  if (!entry) return null;
+  const band = ageBand(age);
+  return {
+    id: entry.id,
+    name: entry.name,
+    clinicianVerified: Boolean(entry.clinician_verified),
+    guidance: entry.notes || "Example guidance – verify with clinician.",
+    dosage: entry.ages?.[band]?.dosing_guidance || "Consult clinician",
+    caution: entry.contraindications || [],
+    reference: entry.references?.[0],
+  };
+}
+
+const FEVER_TYPE_RULES = {
+  "Viral Fever": {
+    medications: [{ id: "paracetamol" }, { id: "hydration_light" }],
+    precautions: [
+      "Rest, hydrate, and avoid crowded environments.",
+      "Monitor temperature every 4 hours.",
+    ],
+    dietPlan: ["Broths, soups, herbal teas", "Vitamin C fruits and ORS after sweating"],
+  },
+  "Bacterial Fever": {
+    medications: [{ id: "paracetamol" }],
+    precautions: [
+      "Seek clinician evaluation for antibiotics.",
+      "Do not start antibiotics without prescription.",
+    ],
+    dietPlan: ["Soft bland diet", "Plenty of fluids"],
+  },
+  Dengue: {
+    medications: [{ id: "paracetamol" }, { id: "ors" }],
+    precautions: [
+      "Avoid NSAIDs (ibuprofen, aspirin).",
+      "Monitor platelet count twice daily if available.",
+    ],
+    dietPlan: ["ORS, coconut water, papaya leaf juice (evidence limited)"],
+  },
+  Typhoid: {
+    medications: [{ id: "paracetamol" }],
+    precautions: [
+      "Clinical antibiotics required – consult doctor immediately.",
+      "Avoid raw foods; maintain hygiene.",
+    ],
+    dietPlan: ["Soft low-fiber foods", "Ensure safe drinking water"],
+  },
+  Malaria: {
+    medications: [{ id: "paracetamol" }],
+    precautions: [
+      "Urgent doctor visit for antimalarial therapy.",
+      "Prevent mosquito exposure for others in household.",
+    ],
+    dietPlan: ["Electrolyte drinks", "Easily digestible carbs"],
+  },
+  "Autoimmune-related fever": {
+    medications: [{ id: "paracetamol" }],
+    precautions: [
+      "Coordinate with rheumatologist; do not stop baseline therapy abruptly.",
+      "Monitor for flare symptoms or new rashes.",
+    ],
+    dietPlan: ["Anti-inflammatory diet focus (omega-3, turmeric)", "Limit processed sugars"],
+  },
+  "Unknown cause": {
+    medications: [{ id: "paracetamol" }, { id: "hydration_light" }],
+    precautions: [
+      "Track temperature and vitals. If symptoms persist beyond 24 hrs, seek care.",
+      "Avoid combining multiple OTC drugs.",
+    ],
+    dietPlan: ["Light meals", "Hydration with ORS"],
+  },
+};
+
+function buildHydrationEntry(strength = "light") {
+  if (strength === "strong") {
+    return {
+      id: "hydration_strong",
+      name: "Electrolyte hydration",
+      clinicianVerified: true,
+      guidance: "Frequent ORS/electrolyte sips; monitor urine output.",
+      dosage: "150-200 ml every 30 mins",
+      caution: ["Limit free water if vomiting continues"],
+      interval: "Continuous sips",
+    };
+  }
+  return {
+    id: "hydration_light",
+    name: "Hydration",
+    clinicianVerified: true,
+    guidance: "Drink 8-10 cups of water or ORS per day.",
+    dosage: "200 ml every hour while awake",
+    caution: [],
+  };
+}
+
+const SPECIAL_MED_ENTRIES = {
+  ors: {
+    id: "ors",
+    name: "Oral Rehydration Solution",
+    clinicianVerified: true,
+    guidance: "Mix as per pack. Take 200-250 ml after each loose stool.",
+    dosage: "Up to 1L/day unless clinician advises otherwise",
+  },
+  hydration_light: buildHydrationEntry("light"),
+  hydration_strong: buildHydrationEntry("strong"),
+};
+
+export function getMedicationsForFeverType({ feverType = "Unknown cause", age = 30 }) {
+  const rule = FEVER_TYPE_RULES[feverType] || FEVER_TYPE_RULES["Unknown cause"];
+  const meds = rule.medications.map((entry) => {
+    if (SPECIAL_MED_ENTRIES[entry.id]) {
+      return SPECIAL_MED_ENTRIES[entry.id];
+    }
+    const med = getMedicationById(entry.id, age);
+    if (!med) return null;
+    return {
+      id: med.id,
+      name: med.name,
+      clinicianVerified: med.clinicianVerified,
+      guidance: med.guidance,
+      dosage: med.dosage,
+      caution: med.caution,
+    };
+  });
+
+  return {
+    medications: meds.filter(Boolean),
+    precautions: rule.precautions || [],
+    dietPlan: rule.dietPlan || [],
+  };
+}
+
 

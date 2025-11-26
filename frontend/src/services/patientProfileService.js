@@ -4,7 +4,7 @@
 export class PatientProfileService {
   constructor() {
     // In a real app, initialize Firebase or API client here
-    this.baseUrl = process.env.REACT_APP_API_URL || 'http://localhost:3000/api';
+    this.baseUrl = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api';
   }
 
   // Save patient profile data to Firebase/backend

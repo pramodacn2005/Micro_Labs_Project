@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { convertAgeToYears } from "../services/firebaseService";
 
 export default function PatientProfile() {
   const { userData, user, refreshUserData } = useAuth();
@@ -17,61 +18,21 @@ export default function PatientProfile() {
   const [newMedicalCondition, setNewMedicalCondition] = useState("");
   const medicalConditionInputRef = useRef(null);
 
-  // Patient data using real user data from Firebase
+  // Patient data structure (timeline and other non-personal info)
   const patientData = {
     personalInfo: {
-      fullName: userData?.fullName || user?.displayName || "User",
-      age: userData?.age || 65,
-      gender: userData?.gender || "Male",
-      email: userData?.email || user?.email || "",
-      phone: userData?.phone || "+1 (555) 123-4567",
-      medicalConditions: userData?.medicalConditions || [],
-      healthStatus: userData?.healthStatus || "stable", // stable, needs_attention, critical
-      lastVitalsCheck: new Date(Date.now() - 15 * 60 * 1000), // 15 minutes ago
-      photo: userData?.photo || null // null means no photo, will show initials
+      fullName: "",
+      age: "",
+      gender: "",
+      email: "",
+      phone: "",
+      weight: "",
+      height: "",
+      medicalConditions: [],
+      healthStatus: "stable",
+      lastVitalsCheck: new Date(Date.now() - 15 * 60 * 1000),
+      photo: null
     },
-    deviceInfo: {
-      deviceId: "HM-001-A7B2C3",
-      lastSync: new Date(Date.now() - 2 * 60 * 1000), // 2 minutes ago
-      batteryLevel: 87,
-      signalStrength: "Strong",
-      status: "online"
-    },
-    emergencyContact: {
-      name: "Jane Smith",
-      phone: "+1 (555) 987-6543",
-      relationship: "Spouse",
-      email: "jane.smith@email.com"
-    },
-    caregivers: [
-      {
-        id: 1,
-        name: "Dr. Sarah Wilson",
-        role: "Primary Caregiver",
-        email: "sarah.wilson@hospital.com",
-        phone: "+1 (555) 234-5678",
-        specialty: "Internal Medicine",
-        photo: null
-      }
-    ],
-    doctors: [
-      {
-        id: 1,
-        name: "Dr. Michael Chen",
-        specialty: "Cardiology",
-        email: "michael.chen@cardiology.com",
-        phone: "+1 (555) 345-6789",
-        photo: null
-      },
-      {
-        id: 2,
-        name: "Dr. Lisa Rodriguez",
-        specialty: "Endocrinology",
-        email: "lisa.rodriguez@endocrine.com",
-        phone: "+1 (555) 456-7890",
-        photo: null
-      }
-    ],
     timeline: [
       {
         id: 1,
@@ -111,10 +72,28 @@ export default function PatientProfile() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Initialize current patient data
+  // Initialize current patient data and update when userData changes
   useEffect(() => {
-    setCurrentPatientData(patientData);
-  }, []);
+    if (!userData && !user) return; // Wait for user data to load
+    
+    const updatedPatientData = {
+      ...patientData,
+      personalInfo: {
+        fullName: userData?.fullName || user?.displayName || "User",
+        age: userData?.age || "",
+        gender: userData?.gender || "",
+        email: userData?.email || user?.email || "",
+        phone: userData?.phone || "",
+        weight: userData?.weight || "",
+        height: userData?.height || "",
+        medicalConditions: userData?.medicalConditions || [],
+        healthStatus: userData?.healthStatus || "stable",
+        lastVitalsCheck: new Date(Date.now() - 15 * 60 * 1000),
+        photo: userData?.photo || null
+      }
+    };
+    setCurrentPatientData(updatedPatientData);
+  }, [userData, user]);
 
   // Initialize editable data when entering edit mode
   useEffect(() => {
@@ -151,9 +130,15 @@ export default function PatientProfile() {
 
   // Validation functions
   const validateAge = (age) => {
-    const numAge = parseInt(age);
-    if (isNaN(numAge) || numAge < 0 || numAge > 150) {
-      return "Age must be a valid number between 0 and 150";
+    if (age === null || age === undefined || age === "") {
+      return "Age is required";
+    }
+    const converted = convertAgeToYears(age);
+    if (converted === null || isNaN(converted)) {
+      return "Enter a valid numeric age";
+    }
+    if (converted < 0 || converted > 150) {
+      return "Age must be between 0 and 150 years";
     }
     return null;
   };
@@ -175,6 +160,24 @@ export default function PatientProfile() {
     return null;
   };
 
+  const validateWeight = (weight) => {
+    if (!weight || weight === "") return null; // Optional field
+    const numWeight = parseFloat(weight);
+    if (isNaN(numWeight) || numWeight < 0 || numWeight > 500) {
+      return "Weight must be a valid number between 0 and 500 kg";
+    }
+    return null;
+  };
+
+  const validateHeight = (height) => {
+    if (!height || height === "") return null; // Optional field
+    const numHeight = parseFloat(height);
+    if (isNaN(numHeight) || numHeight < 0 || numHeight > 300) {
+      return "Height must be a valid number between 0 and 300 cm";
+    }
+    return null;
+  };
+
   const validateField = (field, value) => {
     switch (field) {
       case 'age':
@@ -183,9 +186,54 @@ export default function PatientProfile() {
         return validateEmail(value);
       case 'phone':
         return validatePhone(value);
+      case 'weight':
+        return validateWeight(value);
+      case 'height':
+        return validateHeight(value);
       default:
         return null;
     }
+  };
+
+  const getAgeParts = (ageValue) => {
+    if (!ageValue) {
+      return { value: "", unit: "years" };
+    }
+    const stringValue = String(ageValue).trim();
+    const lower = stringValue.toLowerCase();
+    if (lower.includes("month")) {
+      const match = lower.match(/(\d+(\.\d+)?)/);
+      return { value: match ? match[1] : "", unit: "months" };
+    }
+    return { value: stringValue.replace(/[^\d.]/g, ""), unit: "years" };
+  };
+
+  const formatAgeValue = (value, unit) => {
+    if (!value) return "";
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    return unit === "months" ? `${trimmed} months` : trimmed;
+  };
+
+  const handleAgeValueChange = (value) => {
+    const sanitized = value.replace(/[^\d.]/g, "");
+    const currentUnit = getAgeParts(editableData.age).unit;
+    const formatted = formatAgeValue(sanitized, currentUnit);
+    setEditableData(prev => ({ ...prev, age: formatted }));
+    setValidationErrors(prev => ({
+      ...prev,
+      age: validateAge(formatted)
+    }));
+  };
+
+  const handleAgeUnitChange = (unit) => {
+    const currentValue = getAgeParts(editableData.age).value;
+    const formatted = formatAgeValue(currentValue, unit);
+    setEditableData(prev => ({ ...prev, age: formatted }));
+    setValidationErrors(prev => ({
+      ...prev,
+      age: validateAge(formatted)
+    }));
   };
 
   // Edit mode handlers
@@ -330,13 +378,24 @@ export default function PatientProfile() {
       const firestore = getFirestore();
       const userDocRef = doc(firestore, 'users', user.uid);
       
-      // Prepare data to save (only include fields that exist in editableData)
+      // Prepare data to save - explicitly include all fields
       const dataToSave = {
-        ...editableData,
+        fullName: editableData.fullName || "",
+        age: editableData.age || "",
+        gender: editableData.gender || "",
+        email: editableData.email || "",
+        phone: editableData.phone || "",
+        weight: editableData.weight || "",
+        height: editableData.height || "",
+        medicalConditions: editableData.medicalConditions || [],
+        healthStatus: editableData.healthStatus || "stable",
         updatedAt: new Date().toISOString()
       };
       
       await setDoc(userDocRef, dataToSave, { merge: true });
+      
+      // Wait a bit for Firestore to update before refreshing
+      await new Promise(resolve => setTimeout(resolve, 500));
       
       // Refresh user data in AuthContext
       await refreshUserData();
@@ -377,43 +436,10 @@ export default function PatientProfile() {
     csvData.push(['Gender', currentPatientData.personalInfo.gender]);
     csvData.push(['Email', currentPatientData.personalInfo.email]);
     csvData.push(['Phone', currentPatientData.personalInfo.phone]);
+    csvData.push(['Weight (kg)', currentPatientData.personalInfo.weight || 'Not set']);
+    csvData.push(['Height (cm)', currentPatientData.personalInfo.height || 'Not set']);
     csvData.push(['Medical Conditions', currentPatientData.personalInfo.medicalConditions.join('; ')]);
     csvData.push(['Health Status', currentPatientData.personalInfo.healthStatus]);
-    
-    // Add device information
-    csvData.push(['', '']);
-    csvData.push(['Device Information', '']);
-    csvData.push(['Device ID', currentPatientData.deviceInfo.deviceId]);
-    csvData.push(['Last Sync', currentPatientData.deviceInfo.lastSync.toISOString()]);
-    csvData.push(['Battery Level', `${currentPatientData.deviceInfo.batteryLevel}%`]);
-    csvData.push(['Signal Strength', currentPatientData.deviceInfo.signalStrength]);
-    
-    // Add emergency contact
-    csvData.push(['', '']);
-    csvData.push(['Emergency Contact', '']);
-    csvData.push(['Contact Name', currentPatientData.emergencyContact.name]);
-    csvData.push(['Contact Phone', currentPatientData.emergencyContact.phone]);
-    csvData.push(['Relationship', currentPatientData.emergencyContact.relationship]);
-    
-    // Add caregivers
-    csvData.push(['', '']);
-    csvData.push(['Assigned Caregivers', '']);
-    currentPatientData.caregivers.forEach((caregiver, index) => {
-      csvData.push([`Caregiver ${index + 1}`, caregiver.name]);
-      csvData.push([`Role ${index + 1}`, caregiver.role]);
-      csvData.push([`Email ${index + 1}`, caregiver.email]);
-      csvData.push([`Phone ${index + 1}`, caregiver.phone]);
-    });
-    
-    // Add doctors
-    csvData.push(['', '']);
-    csvData.push(['Attending Doctors', '']);
-    currentPatientData.doctors.forEach((doctor, index) => {
-      csvData.push([`Doctor ${index + 1}`, doctor.name]);
-      csvData.push([`Specialty ${index + 1}`, doctor.specialty]);
-      csvData.push([`Email ${index + 1}`, doctor.email]);
-      csvData.push([`Phone ${index + 1}`, doctor.phone]);
-    });
     
     // Convert to CSV string
     const csvString = csvData.map(row => 
@@ -650,16 +676,38 @@ export default function PatientProfile() {
                     <label className="text-sm font-medium text-gray-700">Age</label>
                     {isEditMode ? (
                       <div>
-                        <input
-                          type="number"
-                          defaultValue={editableData.age || ''}
-                          onKeyDown={(e) => handleEnterKey('age', e)}
-                          onBlur={(e) => handleInputBlur('age', e)}
-                          className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
-                            validationErrors.age ? 'border-red-500' : 'border-gray-300'
-                          }`}
-                          placeholder="Enter age and press Enter"
-                        />
+                        {(() => {
+                          const { value: ageInputValue, unit: ageInputUnit } = getAgeParts(editableData.age);
+                          return (
+                            <>
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={ageInputValue}
+                                  onChange={(e) => handleAgeValueChange(e.target.value)}
+                                  className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                                    validationErrors.age ? 'border-red-500' : 'border-gray-300'
+                                  }`}
+                                  placeholder={ageInputUnit === "months" ? "e.g., 6" : "e.g., 25"}
+                                />
+                                <select
+                                  value={ageInputUnit}
+                                  onChange={(e) => handleAgeUnitChange(e.target.value)}
+                                  className="w-28 px-2 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                                >
+                                  <option value="years">Years</option>
+                                  <option value="months">Months</option>
+                                </select>
+                              </div>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {ageInputUnit === "months"
+                                  ? "Use months for babies under a year old."
+                                  : "Use years for older children and adults."}
+                              </p>
+                            </>
+                          );
+                        })()}
                         {validationErrors.age && (
                           <p className="text-red-500 text-xs mt-1">{validationErrors.age}</p>
                         )}
@@ -730,6 +778,62 @@ export default function PatientProfile() {
                   ) : (
                     <p className="text-gray-900">{currentPatientData?.personalInfo.phone || patientData.personalInfo.phone}</p>
                   )}
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700">Weight (kg)</label>
+                    {isEditMode ? (
+                      <div>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          defaultValue={editableData.weight || ''}
+                          onKeyDown={(e) => handleEnterKey('weight', e)}
+                          onBlur={(e) => handleInputBlur('weight', e)}
+                          className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                            validationErrors.weight ? 'border-red-500' : 'border-gray-300'
+                          }`}
+                          placeholder="e.g., 70"
+                        />
+                        {validationErrors.weight && (
+                          <p className="text-red-500 text-xs mt-1">{validationErrors.weight}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-gray-900">
+                        {currentPatientData?.personalInfo.weight || patientData.personalInfo.weight || "Not set"}
+                        {currentPatientData?.personalInfo.weight || patientData.personalInfo.weight ? " kg" : ""}
+                      </p>
+                    )}
+                  </div>
+                  
+                  <div>
+                    <label className="text-sm font-medium text-gray-700">Height (cm)</label>
+                    {isEditMode ? (
+                      <div>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          defaultValue={editableData.height || ''}
+                          onKeyDown={(e) => handleEnterKey('height', e)}
+                          onBlur={(e) => handleInputBlur('height', e)}
+                          className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent ${
+                            validationErrors.height ? 'border-red-500' : 'border-gray-300'
+                          }`}
+                          placeholder="e.g., 175"
+                        />
+                        {validationErrors.height && (
+                          <p className="text-red-500 text-xs mt-1">{validationErrors.height}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-gray-900">
+                        {currentPatientData?.personalInfo.height || patientData.personalInfo.height || "Not set"}
+                        {currentPatientData?.personalInfo.height || patientData.personalInfo.height ? " cm" : ""}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 
                 <div>
@@ -840,152 +944,6 @@ export default function PatientProfile() {
             </div>
           </Card>
 
-          {/* Device Information Card */}
-          <Card
-            title="Device Information"
-            subtitle="Connected monitoring device details"
-            icon="📱"
-            cardId="device"
-          >
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-gray-700">Status</span>
-                <span className="px-2 py-1 bg-green-100 text-green-800 rounded-full text-xs font-medium">
-                  Online
-                </span>
-              </div>
-              
-              <div>
-                <label className="text-sm font-medium text-gray-700">Device ID</label>
-                <p className="text-gray-900 font-mono text-sm">{currentPatientData?.deviceInfo.deviceId || patientData.deviceInfo.deviceId}</p>
-              </div>
-              
-              <div>
-                <label className="text-sm font-medium text-gray-700">Last Active</label>
-                <p className="text-gray-900">{formatTimeAgo(currentPatientData?.deviceInfo.lastSync || patientData.deviceInfo.lastSync)}</p>
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm font-medium text-gray-700 flex items-center space-x-1">
-                    <span>🔋</span>
-                    <span>Battery Level</span>
-                  </label>
-                  <div className="flex items-center space-x-2 mt-1">
-                    <div className="flex-1 bg-gray-200 rounded-full h-2">
-                      <div 
-                        className="bg-green-500 h-2 rounded-full" 
-                        style={{ width: `${currentPatientData?.deviceInfo.batteryLevel || patientData.deviceInfo.batteryLevel}%` }}
-                      ></div>
-                    </div>
-                    <span className="text-sm text-gray-600">{currentPatientData?.deviceInfo.batteryLevel || patientData.deviceInfo.batteryLevel}%</span>
-                  </div>
-                </div>
-                
-                <div>
-                  <label className="text-sm font-medium text-gray-700 flex items-center space-x-1">
-                    <span>📶</span>
-                    <span>Signal Strength</span>
-                  </label>
-                  <p className="text-gray-900 mt-1">{currentPatientData?.deviceInfo.signalStrength || patientData.deviceInfo.signalStrength}</p>
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          {/* Emergency Contact Card */}
-          <Card
-            title="Emergency Contact"
-            subtitle="Primary contact for emergencies"
-            icon="🚨"
-            cardId="emergency"
-            className="lg:col-span-2"
-          >
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-4">
-                  <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
-                    <span className="text-red-600 font-bold text-lg">
-                      {getInitials(patientData.emergencyContact.name)}
-                    </span>
-                  </div>
-                  <div>
-                    <h4 className="text-lg font-semibold text-gray-900">
-                      {currentPatientData?.emergencyContact.name || patientData.emergencyContact.name}
-                    </h4>
-                    <p className="text-sm text-gray-600">{currentPatientData?.emergencyContact.relationship || patientData.emergencyContact.relationship}</p>
-                    <p className="text-sm text-gray-900">{currentPatientData?.emergencyContact.phone || patientData.emergencyContact.phone}</p>
-                  </div>
-                </div>
-                
-                <div className="flex space-x-2">
-                  <button
-                    onClick={() => handleCall(currentPatientData?.emergencyContact.phone || patientData.emergencyContact.phone)}
-                    className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors flex items-center space-x-2"
-                  >
-                    <span>📞</span>
-                    <span>Call</span>
-                  </button>
-                  <button
-                    onClick={() => handleSMS(currentPatientData?.emergencyContact.phone || patientData.emergencyContact.phone)}
-                    className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors flex items-center space-x-2"
-                  >
-                    <span>💬</span>
-                    <span>SMS</span>
-                  </button>
-                  <button
-                    onClick={() => handleEmail(currentPatientData?.emergencyContact.email || patientData.emergencyContact.email)}
-                    className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors flex items-center space-x-2"
-                  >
-                    <span>📧</span>
-                    <span>Email</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          {/* Assigned Caregivers Card */}
-          <Card
-            title="Assigned Caregivers"
-            subtitle="Healthcare professionals monitoring your care"
-            icon="👩‍⚕️"
-            cardId="caregivers"
-          >
-            <div className="space-y-3">
-              {(currentPatientData?.caregivers || patientData.caregivers).map((caregiver) => (
-                <ContactCard
-                  key={caregiver.id}
-                  name={caregiver.name}
-                  role={caregiver.role}
-                  email={caregiver.email}
-                  phone={caregiver.phone}
-                  photo={caregiver.photo}
-                />
-              ))}
-            </div>
-          </Card>
-
-          {/* Attending Doctors Card */}
-          <Card
-            title="Attending Doctors"
-            subtitle="Medical doctors overseeing your treatment"
-            icon="👨‍⚕️"
-            cardId="doctors"
-          >
-            <div className="space-y-3">
-              {(currentPatientData?.doctors || patientData.doctors).map((doctor) => (
-                <ContactCard
-                  key={doctor.id}
-                  name={doctor.name}
-                  role={doctor.specialty}
-                  email={doctor.email}
-                  phone={doctor.phone}
-                  photo={doctor.photo}
-                />
-              ))}
-            </div>
-          </Card>
         </div>
       ) : (
         /* Timeline Tab */

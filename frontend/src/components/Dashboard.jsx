@@ -12,6 +12,9 @@ import {
   checkEmergencyThresholds,
   generateEmergencySMS,
   CAREGIVER_CONTACT,
+  getAgeAdjustedThresholds,
+  getAgeGroupInfo,
+  convertAgeToYears,
 } from "../services/firebaseService";
 import { designTokens } from "../config/designTokens";
 import { runAllTests } from "../utils/firebaseTest";
@@ -38,6 +41,9 @@ function generateSampleData(count) {
   let baseBodyTemp = 36.5;
   let baseAmbientTemp = 25;
   let baseAccMagnitude = 1.0;
+  let baseBloodSugar = 85; // Normal fasting glucose
+  let baseBPSystolic = 115; // Normal systolic BP
+  let baseBPDiastolic = 75; // Normal diastolic BP
   
   for (let i = 0; i < count; i++) {
     const timestamp = now - (count - i) * 1000; // 1 second intervals
@@ -48,6 +54,9 @@ function generateSampleData(count) {
     const tempVariation = (Math.random() - 0.5) * 0.3; // ±0.15°C variation
     const ambientVariation = (Math.random() - 0.5) * 5; // ±2.5°C variation
     const accVariation = (Math.random() - 0.5) * 0.5; // ±0.25g variation
+    const bloodSugarVariation = (Math.random() - 0.5) * 10; // ±5 mg/dL variation
+    const bpSystolicVariation = (Math.random() - 0.5) * 8; // ±4 mmHg variation
+    const bpDiastolicVariation = (Math.random() - 0.5) * 6; // ±3 mmHg variation
     
     data.push({
       id: `sample_${i}`,
@@ -57,7 +66,10 @@ function generateSampleData(count) {
       bodyTemp: Number((baseBodyTemp + tempVariation).toFixed(1)),
       ambientTemp: Number((baseAmbientTemp + ambientVariation).toFixed(1)),
       accMagnitude: Number((baseAccMagnitude + accVariation).toFixed(2)),
-      fallDetected: Math.random() < 0.02 // 2% chance of fall (reduced)
+      fallDetected: Math.random() < 0.02, // 2% chance of fall (reduced)
+      bloodSugar: Math.round(baseBloodSugar + bloodSugarVariation),
+      bloodPressureSystolic: Math.round(baseBPSystolic + bpSystolicVariation),
+      bloodPressureDiastolic: Math.round(baseBPDiastolic + bpDiastolicVariation)
     });
     
     // Gradually adjust base values for more realistic trends
@@ -66,6 +78,9 @@ function generateSampleData(count) {
     baseBodyTemp += (Math.random() - 0.5) * 0.05;
     baseAmbientTemp += (Math.random() - 0.5) * 0.2;
     baseAccMagnitude += (Math.random() - 0.5) * 0.1;
+    baseBloodSugar += (Math.random() - 0.5) * 1;
+    baseBPSystolic += (Math.random() - 0.5) * 0.5;
+    baseBPDiastolic += (Math.random() - 0.5) * 0.3;
     
     // Keep values within reasonable bounds
     baseHeartRate = Math.max(60, Math.min(100, baseHeartRate));
@@ -73,13 +88,16 @@ function generateSampleData(count) {
     baseBodyTemp = Math.max(36.0, Math.min(37.5, baseBodyTemp));
     baseAmbientTemp = Math.max(15, Math.min(35, baseAmbientTemp));
     baseAccMagnitude = Math.max(0.5, Math.min(2.0, baseAccMagnitude));
+    baseBloodSugar = Math.max(70, Math.min(100, baseBloodSugar));
+    baseBPSystolic = Math.max(90, Math.min(120, baseBPSystolic));
+    baseBPDiastolic = Math.max(60, Math.min(80, baseBPDiastolic));
   }
   
   return data;
 }
 
 export default function Dashboard() {
-  const { user, isAuthenticated } = useAuth();
+  const { user, isAuthenticated, userData } = useAuth();
   const [readings, setReadings] = useState([]);
   const [timeframe, setTimeframe] = useState(TIMEFRAMES[0].key);
   const [liveFast, setLiveFast] = useState(false); // false => 10s, true => 1s
@@ -87,8 +105,21 @@ export default function Dashboard() {
   const [isLiveMode, setIsLiveMode] = useState(false); // Live mode state
   const [emergencyAlert, setEmergencyAlert] = useState(null); // Emergency alert state
   const [smsSent, setSmsSent] = useState(false); // SMS sent status
+  const ageInYears = useMemo(() => convertAgeToYears(userData?.age), [userData?.age]);
+  const ageGroupInfo = useMemo(() => getAgeGroupInfo(ageInYears), [ageInYears]);
+  const ageAdjustedThresholds = useMemo(
+    () => getAgeAdjustedThresholds(ageInYears),
+    [ageInYears]
+  );
+  const profileAgeLabel = useMemo(() => {
+    if (userData?.age) return userData.age;
+    if (ageInYears !== null && ageInYears !== undefined) {
+      return `${Number(ageInYears.toFixed(1))} yrs`;
+    }
+    return null;
+  }, [userData?.age, ageInYears]);
   const backendUrl =
-    import.meta.env.VITE_BACKEND_URL || "http://localhost:3000";
+    import.meta.env.VITE_BACKEND_URL || "http://localhost:4000";
   const pollingRef = useRef(null);
   const lastFirebaseDataRef = useRef(null);
   const firebaseIntervalRef = useRef(null);
@@ -151,7 +182,7 @@ export default function Dashboard() {
       return;
     }
     
-    const emergencyAlerts = checkEmergencyThresholds(reading);
+    const emergencyAlerts = checkEmergencyThresholds(reading, ageInYears);
     
     if (emergencyAlerts.length > 0) {
       console.log("🚨 [EMERGENCY] Emergency threshold breached:", emergencyAlerts);
@@ -204,7 +235,10 @@ export default function Dashboard() {
             bodyTemp: latestReading.bodyTemp,
             ambientTemp: latestReading.ambientTemp,
             accMagnitude: latestReading.accMagnitude,
-            fallDetected: latestReading.fallDetected
+            fallDetected: latestReading.fallDetected,
+            bloodSugar: latestReading.bloodSugar,
+            bloodPressureSystolic: latestReading.bloodPressureSystolic,
+            bloodPressureDiastolic: latestReading.bloodPressureDiastolic
           });
           
           // Update readings with latest data
@@ -266,6 +300,28 @@ export default function Dashboard() {
             smoothed[i].bodyTemp = prev.bodyTemp + (current.bodyTemp - prev.bodyTemp) * 0.3;
           }
         }
+        
+        // Smooth blood sugar (prevent sudden changes > 20 mg/dL)
+        if (current.bloodSugar && prev.bloodSugar) {
+          const sugarDiff = Math.abs(current.bloodSugar - prev.bloodSugar);
+          if (sugarDiff > 20) {
+            smoothed[i].bloodSugar = prev.bloodSugar + (current.bloodSugar - prev.bloodSugar) * 0.3;
+          }
+        }
+        
+        // Smooth blood pressure (prevent sudden changes > 15 mmHg)
+        if (current.bloodPressureSystolic && prev.bloodPressureSystolic) {
+          const bpDiff = Math.abs(current.bloodPressureSystolic - prev.bloodPressureSystolic);
+          if (bpDiff > 15) {
+            smoothed[i].bloodPressureSystolic = prev.bloodPressureSystolic + (current.bloodPressureSystolic - prev.bloodPressureSystolic) * 0.3;
+          }
+        }
+        if (current.bloodPressureDiastolic && prev.bloodPressureDiastolic) {
+          const bpDiff = Math.abs(current.bloodPressureDiastolic - prev.bloodPressureDiastolic);
+          if (bpDiff > 10) {
+            smoothed[i].bloodPressureDiastolic = prev.bloodPressureDiastolic + (current.bloodPressureDiastolic - prev.bloodPressureDiastolic) * 0.3;
+          }
+        }
       }
     }
     
@@ -310,6 +366,15 @@ export default function Dashboard() {
     let bodyTempRaw = pickFirst(
       "bodyTemp","BodyTemp","body_temperature","body_temperature_c","temperature","Temperature","temp","temp_c"
     );
+    let bloodSugarRaw = pickFirst(
+      "bloodSugar","BloodSugar","blood_sugar","glucose","Glucose","bloodGlucose","bg","sugar"
+    );
+    let bloodPressureSystolicRaw = pickFirst(
+      "bloodPressureSystolic","BloodPressureSystolic","bp_systolic","systolic","systolicBP","bpSystolic","systolic_pressure"
+    );
+    let bloodPressureDiastolicRaw = pickFirst(
+      "bloodPressureDiastolic","BloodPressureDiastolic","bp_diastolic","diastolic","diastolicBP","bpDiastolic","diastolic_pressure"
+    );
 
     // Coerce numbers
     const toNum = (v) => {
@@ -320,10 +385,25 @@ export default function Dashboard() {
     let heartRate = toNum(heartRateRaw);
     let spo2 = toNum(spo2Raw);
     let bodyTemp = toNum(bodyTempRaw);
+    let bloodSugar = toNum(bloodSugarRaw);
+    let bloodPressureSystolic = toNum(bloodPressureSystolicRaw);
+    let bloodPressureDiastolic = toNum(bloodPressureDiastolicRaw);
 
     // If body temperature seems to be in Fahrenheit, convert to Celsius
     if (bodyTemp !== null && bodyTemp > 45 && bodyTemp < 120) {
       bodyTemp = Number(((bodyTemp - 32) * 5 / 9).toFixed(1));
+    }
+
+    // Handle BP if provided as "120/80" format
+    if (!bloodPressureSystolic && !bloodPressureDiastolic) {
+      const bpRaw = pickFirst("bloodPressure","BloodPressure","bp","BP","pressure");
+      if (bpRaw && typeof bpRaw === 'string' && bpRaw.includes('/')) {
+        const parts = bpRaw.split('/').map(p => toNum(p.trim()));
+        if (parts.length === 2 && parts[0] && parts[1]) {
+          bloodPressureSystolic = parts[0];
+          bloodPressureDiastolic = parts[1];
+        }
+      }
     }
 
     const normalized = {
@@ -332,6 +412,9 @@ export default function Dashboard() {
       heartRate,
       spo2,
       bodyTemp,
+      bloodSugar,
+      bloodPressureSystolic,
+      bloodPressureDiastolic,
     };
 
     return normalized;
@@ -635,6 +718,34 @@ export default function Dashboard() {
     // Add view history logic here
   };
 
+  // Helper functions for age-aware UI
+  const getRangeLabel = (key, fallback) => {
+    const threshold = ageAdjustedThresholds?.[key];
+    if (
+      threshold &&
+      threshold.min !== undefined &&
+      threshold.max !== undefined
+    ) {
+      const unit = threshold.unit ? ` ${threshold.unit}` : "";
+      return `Normal range: ${threshold.min}-${threshold.max}${unit}`;
+    }
+    return fallback;
+  };
+
+  const getBloodPressureRangeLabel = () => {
+    const systolic = ageAdjustedThresholds?.bloodPressureSystolic;
+    const diastolic = ageAdjustedThresholds?.bloodPressureDiastolic;
+    if (
+      systolic?.min !== undefined &&
+      systolic?.max !== undefined &&
+      diastolic?.min !== undefined &&
+      diastolic?.max !== undefined
+    ) {
+      return `Normal range: ${systolic.min}-${systolic.max}/${diastolic.min}-${diastolic.max} ${systolic.unit || "mmHg"}`;
+    }
+    return "Normal: <120/80 mmHg";
+  };
+
   // Live mode toggle button
   const LiveModeToggle = () => (
     <div className="flex items-center gap-4 mb-6">
@@ -672,6 +783,32 @@ export default function Dashboard() {
           No live data received recently. Displaying last known values.
         </div>
       )}
+
+      {/* Age-based threshold banner */}
+      <div
+        className={`rounded-lg border px-4 py-3 text-sm ${
+          ageGroupInfo
+            ? "bg-sky-50 border-sky-200 text-sky-900"
+            : "bg-gray-50 border-gray-200 text-gray-700"
+        }`}
+      >
+        {ageGroupInfo ? (
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Using age-based thresholds for{" "}
+              <span className="font-semibold">{ageGroupInfo.label}</span>
+              {profileAgeLabel ? ` (profile age: ${profileAgeLabel})` : ""}.
+            </span>
+            <span className="text-xs text-sky-700">
+              Update the Patient Profile age to refresh these ranges.
+            </span>
+          </div>
+        ) : (
+          <span>
+            Add your age in the Patient Profile to personalize dashboard thresholds.
+          </span>
+        )}
+      </div>
 
       {/* Live mode toggle */}
       <LiveModeToggle />
@@ -776,10 +913,10 @@ export default function Dashboard() {
           unit="BPM"
           status={evaluateStatus(
             Number(latest?.heartRate),
-            DEFAULT_THRESHOLDS.heartRate
+            ageAdjustedThresholds.heartRate
           )}
           timestamp={latest?.timestamp}
-          normalRange="Normal range: 60-100 BPM"
+          normalRange={getRangeLabel("heartRate", "Normal range: 60-100 BPM")}
           trendData={getTrendData('heartRate')}
         />
         <VitalsCard
@@ -788,10 +925,10 @@ export default function Dashboard() {
           unit="%"
           status={evaluateStatus(
             Number(latest?.spo2),
-            DEFAULT_THRESHOLDS.spo2
+            ageAdjustedThresholds.spo2
           )}
           timestamp={latest?.timestamp}
-          normalRange="Normal range: 95-100%"
+          normalRange={getRangeLabel("spo2", "Normal range: 95-100%")}
           trendData={getTrendData('spo2')}
         />
         <VitalsCard
@@ -800,10 +937,10 @@ export default function Dashboard() {
           unit="°C"
           status={evaluateStatus(
             Number(latest?.bodyTemp),
-            DEFAULT_THRESHOLDS.bodyTemp
+            ageAdjustedThresholds.bodyTemp
           )}
           timestamp={latest?.timestamp}
-          normalRange="Normal range: 36.1-37.2°C"
+          normalRange={getRangeLabel("bodyTemp", "Normal range: 36.1-37.2°C")}
           trendData={getTrendData('bodyTemp')}
         />
         <VitalsCard
@@ -812,10 +949,10 @@ export default function Dashboard() {
           unit="°C"
           status={evaluateStatus(
             Number(latest?.ambientTemp),
-            DEFAULT_THRESHOLDS.ambientTemp
+            ageAdjustedThresholds.ambientTemp
           )}
           timestamp={latest?.timestamp}
-          normalRange="Environment sensor"
+          normalRange={getRangeLabel("ambientTemp", "Environment sensor")}
           trendData={getTrendData('ambientTemp')}
         />
         <VitalsCard
@@ -824,10 +961,10 @@ export default function Dashboard() {
           unit="g"
           status={evaluateStatus(
             Number(latest?.accMagnitude),
-            DEFAULT_THRESHOLDS.accMagnitude
+            ageAdjustedThresholds.accMagnitude
           )}
           timestamp={latest?.timestamp}
-          normalRange="Movement detection"
+          normalRange={getRangeLabel("accMagnitude", "Movement detection")}
           trendData={getTrendData('accMagnitude')}
         />
         <VitalsCard
@@ -840,17 +977,56 @@ export default function Dashboard() {
           fallDetected={latest?.fallDetected}
           lastFallTime={summaryData.lastFallTime}
         />
-        {/* Placeholder cards for 8-card grid */}
-        <div className="bg-gray-50 rounded-card p-4 border border-gray-200">
-          <div className="text-center text-gray-500 text-sm">
-            Additional Sensor
-          </div>
-        </div>
-        <div className="bg-gray-50 rounded-card p-4 border border-gray-200">
-          <div className="text-center text-gray-500 text-sm">
-            Additional Sensor
-          </div>
-        </div>
+        <VitalsCard
+          label="Blood Sugar"
+          value={latest?.bloodSugar}
+          unit="mg/dL"
+          status={evaluateStatus(
+            Number(latest?.bloodSugar),
+            ageAdjustedThresholds.bloodSugar
+          )}
+          timestamp={latest?.timestamp}
+          normalRange={getRangeLabel(
+            "bloodSugar",
+            "Normal range: 70-100 mg/dL (fasting)"
+          )}
+          trendData={getTrendData('bloodSugar')}
+        />
+        <VitalsCard
+          label="Blood Pressure"
+          value={
+            latest?.bloodPressureSystolic && latest?.bloodPressureDiastolic
+              ? `${latest.bloodPressureSystolic}/${latest.bloodPressureDiastolic}`
+              : latest?.bloodPressureSystolic || latest?.bloodPressureDiastolic
+              ? `${latest.bloodPressureSystolic || '--'}/${latest.bloodPressureDiastolic || '--'}`
+              : null
+          }
+          unit="mmHg"
+          status={
+            latest?.bloodPressureSystolic && latest?.bloodPressureDiastolic
+              ? evaluateStatus(
+                  Number(latest.bloodPressureSystolic),
+                  ageAdjustedThresholds.bloodPressureSystolic
+                ) === 'critical' || evaluateStatus(
+                  Number(latest.bloodPressureDiastolic),
+                  ageAdjustedThresholds.bloodPressureDiastolic
+                ) === 'critical'
+                ? 'critical'
+                : evaluateStatus(
+                    Number(latest.bloodPressureSystolic),
+                    ageAdjustedThresholds.bloodPressureSystolic
+                  ) === 'warning' || evaluateStatus(
+                    Number(latest.bloodPressureDiastolic),
+                    ageAdjustedThresholds.bloodPressureDiastolic
+                  ) === 'warning'
+                  ? 'warning'
+                  : 'normal'
+              : 'unknown'
+          }
+          timestamp={latest?.timestamp}
+          normalRange={getBloodPressureRangeLabel()}
+          trendData={getTrendData('bloodPressureSystolic')}
+        />
       </div>
 
 

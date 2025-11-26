@@ -43,6 +43,30 @@ const VITAL_THRESHOLDS = {
     criticalMax: 5.0,
     name: "Acceleration Magnitude",
     unit: "g"
+  },
+  bloodSugar: { 
+    min: 70, 
+    max: 100, 
+    criticalMin: 50, 
+    criticalMax: 250,
+    name: "Blood Sugar (Glucose)",
+    unit: "mg/dL"
+  },
+  bloodPressureSystolic: { 
+    min: 90, 
+    max: 120, 
+    criticalMin: 80, 
+    criticalMax: 140,
+    name: "Blood Pressure (Systolic)",
+    unit: "mmHg"
+  },
+  bloodPressureDiastolic: { 
+    min: 60, 
+    max: 80, 
+    criticalMin: 50, 
+    criticalMax: 90,
+    name: "Blood Pressure (Diastolic)",
+    unit: "mmHg"
   }
 };
 

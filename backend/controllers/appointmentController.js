@@ -57,9 +57,19 @@ async function verifyAuth(req) {
 
 /**
  * GET /doctors - Get list of available doctors with filters
+ * Note: This endpoint does not require user authentication (public endpoint)
  */
 export async function getDoctors(req, res) {
   try {
+    // Check if Firebase Admin is initialized
+    if (!admin.apps.length) {
+      console.error('[getDoctors] Firebase Admin SDK not initialized');
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Server configuration error. Firebase Admin SDK not initialized.' 
+      });
+    }
+
     const filters = {
       specialization: req.query.specialization,
       location: req.query.location,
@@ -70,8 +80,39 @@ export async function getDoctors(req, res) {
     const doctors = await appointmentService.getDoctors(filters);
     res.json({ success: true, doctors });
   } catch (error) {
-    console.error('Error in getDoctors:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('[getDoctors] Error fetching doctors:', error);
+    console.error('[getDoctors] Error code:', error.code);
+    console.error('[getDoctors] Error message:', error.message);
+    
+    // Provide more helpful error messages
+    let errorMessage = error.message;
+    let helpLink = null;
+    
+    if (error.code === 16 || error.message.includes('UNAUTHENTICATED')) {
+      errorMessage = 'Firebase Admin authentication failed. The service account credentials are invalid or expired.';
+      helpLink = 'See backend/FIX_FIREBASE_AUTH.md for instructions to regenerate the service account key.';
+      console.error('[getDoctors] Firebase Admin authentication error. Check service account credentials.');
+      console.error('[getDoctors] Run: node scripts/test-firebase-admin.js to diagnose the issue.');
+    } else if (error.message.includes('permission') || error.message.includes('PERMISSION_DENIED')) {
+      errorMessage = 'Firestore permission denied. The service account needs Firestore read/write permissions.';
+      helpLink = 'Grant "Cloud Datastore User" role to the service account in Google Cloud Console.';
+    }
+    
+    const response = { 
+      success: false, 
+      error: errorMessage
+    };
+    
+    if (helpLink) {
+      response.help = helpLink;
+    }
+    
+    if (process.env.NODE_ENV === 'development') {
+      response.details = error.message;
+      response.errorCode = error.code;
+    }
+    
+    res.status(500).json(response);
   }
 }
 
@@ -122,7 +163,7 @@ export async function createAppointment(req, res) {
     const decodedToken = await verifyAuth(req);
     const patientId = decodedToken.uid;
 
-    const { doctor_id, date, time_slot, reason } = req.body;
+    const { doctor_id, date, time_slot, reason, medical_reports } = req.body;
 
     if (!doctor_id || !date || !time_slot) {
       return res.status(400).json({ 
@@ -136,7 +177,8 @@ export async function createAppointment(req, res) {
       doctor_id,
       date,
       time_slot,
-      reason: reason || ''
+      reason: reason || '',
+      medical_reports: medical_reports || [] // Array of file IDs from patient upload
     });
 
     res.status(201).json({ success: true, appointment });

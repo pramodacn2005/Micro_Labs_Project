@@ -28,7 +28,7 @@ export default function LiveMonitoring() {
   const [isOfflineSimulated, setIsOfflineSimulated] = useState(false);
   const [updateInterval, setUpdateInterval] = useState(5000); // 5 seconds
   const [isLiveMode, setIsLiveMode] = useState(false); // Live mode state
-  const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:3000";
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || "http://localhost:4000";
   const pollingRef = useRef(null);
   const lastFirebaseDataRef = useRef(null);
   const firebaseIntervalRef = useRef(null);
@@ -71,7 +71,10 @@ export default function LiveMonitoring() {
             bodyTemp: latestReading.bodyTemp,
             ambientTemp: latestReading.ambientTemp,
             accMagnitude: latestReading.accMagnitude,
-            fallDetected: latestReading.fallDetected
+            fallDetected: latestReading.fallDetected,
+            bloodSugar: latestReading.bloodSugar,
+            bloodPressureSystolic: latestReading.bloodPressureSystolic,
+            bloodPressureDiastolic: latestReading.bloodPressureDiastolic
           });
           
           // Update readings with latest data - append to existing data
@@ -126,6 +129,28 @@ export default function LiveMonitoring() {
             smoothed[i].bodyTemp = prev.bodyTemp + (current.bodyTemp - prev.bodyTemp) * 0.3;
           }
         }
+        
+        // Smooth blood sugar (prevent sudden changes > 20 mg/dL)
+        if (current.bloodSugar && prev.bloodSugar) {
+          const sugarDiff = Math.abs(current.bloodSugar - prev.bloodSugar);
+          if (sugarDiff > 20) {
+            smoothed[i].bloodSugar = prev.bloodSugar + (current.bloodSugar - prev.bloodSugar) * 0.3;
+          }
+        }
+        
+        // Smooth blood pressure (prevent sudden changes > 15 mmHg)
+        if (current.bloodPressureSystolic && prev.bloodPressureSystolic) {
+          const bpDiff = Math.abs(current.bloodPressureSystolic - prev.bloodPressureSystolic);
+          if (bpDiff > 15) {
+            smoothed[i].bloodPressureSystolic = prev.bloodPressureSystolic + (current.bloodPressureSystolic - prev.bloodPressureSystolic) * 0.3;
+          }
+        }
+        if (current.bloodPressureDiastolic && prev.bloodPressureDiastolic) {
+          const bpDiff = Math.abs(current.bloodPressureDiastolic - prev.bloodPressureDiastolic);
+          if (bpDiff > 10) {
+            smoothed[i].bloodPressureDiastolic = prev.bloodPressureDiastolic + (current.bloodPressureDiastolic - prev.bloodPressureDiastolic) * 0.3;
+          }
+        }
       }
     }
     
@@ -156,6 +181,9 @@ export default function LiveMonitoring() {
     let accMagnitudeRaw = pickFirst("accMagnitude", "AccMagnitude", "acceleration_magnitude", "acc_magnitude");
     let fallDetectedRaw = pickFirst("fallDetected", "FallDetected", "fall_detected");
     let alertedRaw = pickFirst("alerted", "Alerted", "alert_active");
+    let bloodSugarRaw = pickFirst("bloodSugar", "BloodSugar", "blood_sugar", "glucose", "Glucose", "bloodGlucose", "bg", "sugar");
+    let bloodPressureSystolicRaw = pickFirst("bloodPressureSystolic", "BloodPressureSystolic", "bp_systolic", "systolic", "systolicBP", "bpSystolic", "systolic_pressure");
+    let bloodPressureDiastolicRaw = pickFirst("bloodPressureDiastolic", "BloodPressureDiastolic", "bp_diastolic", "diastolic", "diastolicBP", "bpDiastolic", "diastolic_pressure");
 
     const toNum = (v) => {
       const n = Number(v);
@@ -175,10 +203,25 @@ export default function LiveMonitoring() {
     let accMagnitude = toNum(accMagnitudeRaw);
     let fallDetected = toBool(fallDetectedRaw);
     let alerted = toBool(alertedRaw);
+    let bloodSugar = toNum(bloodSugarRaw);
+    let bloodPressureSystolic = toNum(bloodPressureSystolicRaw);
+    let bloodPressureDiastolic = toNum(bloodPressureDiastolicRaw);
 
     // Convert Fahrenheit to Celsius if needed
     if (bodyTemp !== null && bodyTemp > 45 && bodyTemp < 120) {
       bodyTemp = Number(((bodyTemp - 32) * 5 / 9).toFixed(1));
+    }
+
+    // Handle BP if provided as "120/80" format
+    if (!bloodPressureSystolic && !bloodPressureDiastolic) {
+      const bpRaw = pickFirst("bloodPressure", "BloodPressure", "bp", "BP", "pressure");
+      if (bpRaw && typeof bpRaw === 'string' && bpRaw.includes('/')) {
+        const parts = bpRaw.split('/').map(p => toNum(p.trim()));
+        if (parts.length === 2 && parts[0] && parts[1]) {
+          bloodPressureSystolic = parts[0];
+          bloodPressureDiastolic = parts[1];
+        }
+      }
     }
 
     return {
@@ -191,6 +234,9 @@ export default function LiveMonitoring() {
       accMagnitude,
       fallDetected,
       alerted,
+      bloodSugar,
+      bloodPressureSystolic,
+      bloodPressureDiastolic,
     };
   }
 
@@ -496,6 +542,41 @@ export default function LiveMonitoring() {
           height={300}
           timestamps={getChartTimestamps()}
           status={latest?.fallDetected ? 'critical' : 'normal'}
+        />
+        
+        {/* Row 4: Blood Sugar & Blood Pressure */}
+        <VitalChart
+            type="bloodSugar"
+          data={getChartData('bloodSugar')}
+          currentValue={latest?.bloodSugar}
+          width={600}
+          height={300}
+          timestamps={getChartTimestamps()}
+          status={getVitalStatus('bloodSugar')}
+        />
+        
+        <VitalChart
+            type="bloodPressure"
+          data={getChartData('bloodPressureSystolic')}
+          currentValue={
+            latest?.bloodPressureSystolic && latest?.bloodPressureDiastolic
+              ? `${latest.bloodPressureSystolic}/${latest.bloodPressureDiastolic}`
+              : latest?.bloodPressureSystolic || latest?.bloodPressureDiastolic
+              ? `${latest.bloodPressureSystolic || '--'}/${latest.bloodPressureDiastolic || '--'}`
+              : null
+          }
+          width={600}
+          height={300}
+          timestamps={getChartTimestamps()}
+          status={
+            latest?.bloodPressureSystolic && latest?.bloodPressureDiastolic
+              ? getVitalStatus('bloodPressureSystolic') === 'critical' || getVitalStatus('bloodPressureDiastolic') === 'critical'
+                ? 'critical'
+                : getVitalStatus('bloodPressureSystolic') === 'warning' || getVitalStatus('bloodPressureDiastolic') === 'warning'
+                ? 'warning'
+                : 'normal'
+              : 'unknown'
+          }
         />
         
         {/* Row 4: Alert Status (centered) */}

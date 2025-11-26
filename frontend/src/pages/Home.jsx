@@ -9,11 +9,12 @@ import AlertManagement from "../components/AlertManagement";
 import PatientProfile from "../components/PatientProfile";
 import Settings from "../components/Settings";
 import History from "../components/History";
-import FeverChecker from "../components/FeverChecker";
+import FeverAnalysis from "../components/FeverAnalysis";
 import AIAssistant from "../components/AIAssistant";
 import DoctorList from "../components/DoctorList";
 import BookAppointment from "../components/BookAppointment";
 import PatientAppointments from "../components/PatientAppointments";
+import PatientPrescriptions from "../components/PatientPrescriptions";
 import DoctorDashboard from "../components/DoctorDashboard";
 import AdminDashboard from "../components/AdminDashboard";
 import RoleSelector from "../components/RoleSelector";
@@ -142,7 +143,7 @@ export default function Home() {
               <Settings />
             )} */}
             {currentPage === "fever-checker" && (
-              <FeverChecker />
+              <FeverAnalysis />
             )}
             {currentPage === "ai-assistant" && (
               <AIAssistant />
@@ -158,6 +159,9 @@ export default function Home() {
             )}
             {currentPage === "my-appointments" && (
               <PatientAppointments />
+            )}
+            {currentPage === "my-prescriptions" && (
+              <PatientPrescriptions />
             )}
             {currentPage === "doctor-dashboard" && (
               <DoctorDashboard />

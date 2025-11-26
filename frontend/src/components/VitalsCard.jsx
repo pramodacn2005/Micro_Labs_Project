@@ -29,7 +29,11 @@ export default function VitalsCard({
       'Temperature': '🌡️',
       'Ambient Temp': '🌡️',
       'Acceleration Magnitude': '📊',
-      'Fall Detected': '⚠️'
+      'Fall Detected': '⚠️',
+      'Blood Sugar': '🩸',
+      'Blood Glucose': '🩸',
+      'Blood Pressure': '🩺',
+      'BP': '🩺'
     };
     return iconMap[label] || '📊';
   };

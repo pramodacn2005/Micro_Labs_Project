@@ -74,7 +74,7 @@ export async function performClinicalAssessment(req, res) {
     const spO2 = spo2 || spo2_pct;
 
     // Normalize respiratory rate
-    const respRate = respiratory_rate_bpm || respiratory_rate;
+    const respRate = respiratory_rate || respiratory_rate_bpm;
 
     // Normalize location
     const userLoc = location || user_location;
@@ -93,8 +93,10 @@ export async function performClinicalAssessment(req, res) {
       // Vital Signs
       temperature_c: temp ? parseFloat(temp) : null,
       heart_rate_bpm: heart_rate_bpm ? parseInt(heart_rate_bpm) : null,
+      respiratory_rate: respRate ? parseInt(respRate) : null,
       respiratory_rate_bpm: respRate ? parseInt(respRate) : null,
       spo2: spO2 ? parseFloat(spO2) : null,
+      spo2_pct: spO2 ? parseFloat(spO2) : null,
       bp_systolic: bp_systolic ? parseInt(bp_systolic) : null,
       bp_diastolic: bp_diastolic ? parseInt(bp_diastolic) : null,
       
@@ -122,7 +124,14 @@ export async function performClinicalAssessment(req, res) {
       
       // Location
       location: userLoc,
+      user_location: userLoc,
       consent_location: consent_location === true || consent_location === 'true',
+      
+      // Time series data (optional)
+      time_series_temps: req.body.time_series_temps || null,
+      
+      // Hospital search flag
+      request_hospitals: req.body.request_hospitals !== false, // Default to true
     };
 
     // Perform clinical assessment
@@ -133,13 +142,13 @@ export async function performClinicalAssessment(req, res) {
       return res.status(400).json(result);
     }
 
-    // Return structured response
+    // Return exact format as specified
     return res.status(200).json({
       fever_assessment: result.fever_assessment,
-      emergency_status: result.emergency_status,
+      charts: result.charts,
       results_json: result.results_json,
       summary_text: result.summary_text,
-      otc_guidance: getOTCGuidance(params, result.fever_assessment.fever_type),
+      disclaimer: result.disclaimer,
     });
 
   } catch (error) {

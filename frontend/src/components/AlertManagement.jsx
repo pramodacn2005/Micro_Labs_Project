@@ -1,14 +1,17 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { designTokens } from "../config/designTokens";
 import {
   getFirebaseDb,
   checkEmergencyThresholds,
   DEFAULT_THRESHOLDS,
   evaluateStatus,
+  convertAgeToYears,
 } from "../services/firebaseService";
 import { ref, get, query, orderByKey, limitToLast } from "firebase/database";
+import { useAuth } from "../contexts/AuthContext";
 
 export default function AlertManagement() {
+  const { userData } = useAuth();
   const [alerts, setAlerts] = useState([]);
   const [filteredAlerts, setFilteredAlerts] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
@@ -23,6 +26,7 @@ export default function AlertManagement() {
   const [lastUpdateTime, setLastUpdateTime] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const livePollingRef = useRef(null);
+  const ageInYears = useMemo(() => convertAgeToYears(userData?.age), [userData?.age]);
 
   // Function to fetch latest data from Firebase
   const fetchLatestData = async () => {
@@ -70,7 +74,7 @@ export default function AlertManagement() {
     
     readings.forEach((reading, index) => {
       // Check for emergency thresholds
-      const emergencyAlerts = checkEmergencyThresholds(reading);
+      const emergencyAlerts = checkEmergencyThresholds(reading, ageInYears);
       
       emergencyAlerts.forEach(alert => {
         const alertId = `${reading.id}_${alert.parameter}_${Date.now()}`;

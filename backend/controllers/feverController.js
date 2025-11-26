@@ -7,6 +7,9 @@ import { getMedicationSuggestions } from "../services/medicationService.js";
 import { generateAssistantResponse } from "../services/assistantService.js";
 import { assertWithinRateLimit } from "../services/rateLimiter.js";
 import { saveSession, getSession, updateSession } from "../store/feverSessionStore.js";
+import { classifyFeverType } from "../services/clinicalAssistantService.js";
+import { predictLabReportModel } from "../services/labReportModelService.js";
+import { getLabUpload } from "../store/labReportUploadStore.js";
 
 function determineSeverity(probability) {
   if (probability == null) return "Unknown";
@@ -52,6 +55,58 @@ function normalizePayload(data) {
   };
 }
 
+function normalizeLabValuesInput(values) {
+  if (!values || typeof values !== "object") return null;
+  const normalized = {};
+  let hasValue = false;
+  for (const [key, value] of Object.entries(values)) {
+    if (value === "" || value === null || typeof value === "undefined") continue;
+    const num = Number(value);
+    if (Number.isFinite(num)) {
+      normalized[key] = Number(num.toFixed(2));
+      hasValue = true;
+    }
+  }
+  return hasValue ? normalized : null;
+}
+
+function hasLabSignals(values) {
+  return Boolean(values && Object.values(values).some((v) => v !== null && typeof v !== "undefined"));
+}
+
+function combinePredictions(symptomPrediction, labPrediction) {
+  if (!labPrediction) {
+    return {
+      label: symptomPrediction.label,
+      probability: symptomPrediction.probability,
+      source: "symptoms",
+    };
+  }
+
+  if (!symptomPrediction || !symptomPrediction.label) {
+    return {
+      label: labPrediction.fever_type,
+      probability: labPrediction.confidence,
+      source: "lab",
+    };
+  }
+
+  if (labPrediction.confidence >= 0.6) {
+    return {
+      label: labPrediction.fever_type,
+      probability: Math.max(labPrediction.confidence, symptomPrediction.probability || 0.5),
+      source: "lab",
+    };
+  }
+
+  const blendedProbability = ((symptomPrediction.probability || 0.5) + labPrediction.confidence) / 2;
+  return {
+    label: symptomPrediction.label,
+    probability: blendedProbability,
+    source: "combined",
+  };
+}
+
 export async function runFeverCheck(req, res) {
   const validation = feverCheckSchema.safeParse(req.body);
   if (!validation.success) {
@@ -67,7 +122,8 @@ export async function runFeverCheck(req, res) {
     });
   }
 
-  const parsed = normalizePayload(validation.data);
+  const { lab_values: requestLabValues, lab_upload_id: requestLabUploadId, ...rest } = validation.data;
+  const parsed = normalizePayload(rest);
   const sessionId = uuid();
 
   // Debug logging
@@ -77,19 +133,84 @@ export async function runFeverCheck(req, res) {
   console.log("[DEBUG] Respiratory rate:", parsed.respiratory_rate_bpm);
   console.log("[DEBUG] SpO2:", parsed.spo2);
   console.log("[DEBUG] Vomiting:", parsed.vomiting);
+  console.log("[DEBUG] Location:", JSON.stringify(parsed.location, null, 2));
 
   try {
     const modelResponse = await predictFever(parsed);
-    const probability = modelResponse?.prediction?.probability ?? modelResponse?.probability;
-    const severity = modelResponse?.prediction?.severity || determineSeverity(probability);
+    const symptomProbability = modelResponse?.prediction?.probability ?? modelResponse?.probability;
+    const symptomSeverity = modelResponse?.prediction?.severity || determineSeverity(symptomProbability);
+    const symptomPrediction = {
+      label: modelResponse?.prediction?.label || modelResponse?.label,
+      probability: symptomProbability,
+      severity: symptomSeverity,
+    };
+
+    let labValues = normalizeLabValuesInput(requestLabValues);
+    let labUploadId = requestLabUploadId;
+
+    if ((!labValues || !hasLabSignals(labValues)) && labUploadId) {
+      const cachedUpload = await getLabUpload(labUploadId);
+      if (cachedUpload?.parsedValues) {
+        labValues = normalizeLabValuesInput(cachedUpload.parsedValues);
+      }
+    }
+
+    if ((!labValues || !hasLabSignals(labValues)) && !labUploadId) {
+      labValues = null;
+    }
+
+    let labPrediction = null;
+    if (labValues && hasLabSignals(labValues)) {
+      try {
+        labPrediction = await predictLabReportModel({
+          patient: {
+            age: parsed.age,
+            gender: parsed.gender,
+          },
+          lab_values: labValues,
+        });
+      } catch (error) {
+        console.warn("[FeverCheck] Lab prediction failed:", error.message);
+      }
+    }
+
+    const combinedPrediction = combinePredictions(symptomPrediction, labPrediction);
+    const finalSeverity = determineSeverity(combinedPrediction.probability);
+    
+    // Classify fever type (Viral, Bacterial, Dengue, etc.) using symptoms plus any lab signals
+    const classificationInput = labValues ? { ...parsed, ...labValues } : parsed;
+    const baseFeverClassification = classifyFeverType(classificationInput);
+    const feverClassification = mergeFeverClassificationWithLab(baseFeverClassification, labPrediction);
+
+    const finalAssessment = buildFinalAssessment({
+      symptomPrediction,
+      labPrediction,
+      feverClassification,
+      combinedPrediction: {
+        ...combinedPrediction,
+        severity: finalSeverity,
+      },
+    });
+    
     const medications = getMedicationSuggestions({ 
       age: parsed.age, 
-      severityBucket: severity,
-      probability: probability 
+      severityBucket: finalSeverity,
+      probability: combinedPrediction.probability 
     });
-    const precautions = buildPrecautions(severity);
-    const dietPlan = buildDietPlan(severity);
+    const precautions = buildPrecautions(finalSeverity);
+    const dietPlan = buildDietPlan(finalSeverity);
+    
+    // Lookup hospitals with location
+    console.log("[DEBUG] Looking up hospitals for location:", JSON.stringify(parsed.location, null, 2));
     const hospitals = await lookupHospitals(parsed.location);
+    console.log("[DEBUG] Found hospitals:", hospitals.length);
+    if (hospitals.length > 0) {
+      console.log("[DEBUG] Sample hospital:", JSON.stringify(hospitals[0], null, 2));
+    } else if (parsed.location) {
+      console.warn("[DEBUG] No hospitals found for location:", JSON.stringify(parsed.location, null, 2));
+    } else {
+      console.warn("[DEBUG] No location provided for hospital lookup");
+    }
 
     const reportMetadata = await generateFeverReport({
       sessionId,
@@ -99,9 +220,9 @@ export async function runFeverCheck(req, res) {
         temperature_c: parsed.temperature_c,
       },
       prediction: {
-        label: modelResponse?.prediction?.label || modelResponse?.label,
-        probability,
-        severity,
+        label: combinedPrediction.label,
+        probability: combinedPrediction.probability,
+        severity: finalSeverity,
       },
       explainability: modelResponse?.explainability || modelResponse?.top_features,
       suggestions: { medications, precautions },
@@ -111,9 +232,21 @@ export async function runFeverCheck(req, res) {
 
     const responsePayload = {
       prediction: {
-        label: modelResponse?.prediction?.label || modelResponse?.label,
-        probability,
-        severity,
+        label: combinedPrediction.label,
+        probability: combinedPrediction.probability,
+        severity: finalSeverity,
+      },
+      symptom_prediction: symptomPrediction,
+      lab_prediction: labPrediction,
+      lab_values: labValues,
+      lab_source: labUploadId ? { upload_id: labUploadId } : undefined,
+      fever_classification: {
+        fever_type: feverClassification.fever_type,
+        secondary_type: feverClassification.secondary_type,
+        primary_confidence: feverClassification.primary_confidence,
+        secondary_confidence: feverClassification.secondary_confidence,
+        all_confidences: feverClassification.all_confidences,
+        rationale: feverClassification.rationale,
       },
       explainability: {
         top_features: modelResponse?.explainability?.top_features || modelResponse?.top_features || [],
@@ -126,6 +259,8 @@ export async function runFeverCheck(req, res) {
         dietPlan,
       },
       hospitals,
+      final_assessment: finalAssessment,
+      location: parsed.location, // Include location in response so frontend can display it
       consent: parsed.consent,
       timestamp: new Date().toISOString(),
     };
@@ -135,11 +270,20 @@ export async function runFeverCheck(req, res) {
       reportId: reportMetadata.reportId,
       reportPath: reportMetadata.filePath,
       inputs: parsed,
+      labReport: labValues
+        ? {
+            values: labValues,
+            uploadId: labUploadId,
+            prediction: labPrediction,
+          }
+        : undefined,
       prediction: responsePayload.prediction,
+      fever_classification: responsePayload.fever_classification,
       explainability: responsePayload.explainability,
       suggestions: responsePayload.suggestions,
       hospitals,
       consent: parsed.consent,
+      final_assessment: finalAssessment,
       assistantHistory: [],
     });
 
@@ -153,6 +297,106 @@ export async function runFeverCheck(req, res) {
       stack: process.env.NODE_ENV !== "production" ? error.stack : undefined
     });
   }
+}
+
+function mapLabFeverTypeToClinical(label) {
+  if (!label) return null;
+  const lower = label.toLowerCase();
+  if (lower.includes("viral")) return "Viral Fever";
+  if (lower.includes("bacterial")) return "Bacterial Fever";
+  if (lower.includes("dengue")) return "Dengue Fever";
+  if (lower.includes("typhoid")) return "Typhoid Fever";
+  if (lower.includes("malaria")) return "Malaria Fever";
+  return null;
+}
+
+function mergeFeverClassificationWithLab(symptomClass, labPrediction) {
+  if (!labPrediction || !labPrediction.fever_type) return symptomClass;
+  const mappedLabType = mapLabFeverTypeToClinical(labPrediction.fever_type);
+  if (!mappedLabType) return symptomClass;
+
+  const labConf = Math.round((labPrediction.confidence || 0) * 100);
+  const originalPrimary = symptomClass.fever_type;
+  const originalPrimaryConf = symptomClass.primary_confidence;
+  const allConfidences = { ...(symptomClass.all_confidences || {}) };
+
+  if (mappedLabType in allConfidences) {
+    allConfidences[mappedLabType] = Math.max(allConfidences[mappedLabType], labConf);
+  }
+
+  // If lab confidence is modest, only add as secondary if different
+  if (labConf < 60) {
+    if (mappedLabType === originalPrimary) {
+      return {
+        ...symptomClass,
+        all_confidences,
+      };
+    }
+    const secondary_type = symptomClass.secondary_type || mappedLabType;
+    const secondary_confidence =
+      symptomClass.secondary_type === mappedLabType
+        ? Math.max(symptomClass.secondary_confidence || 0, labConf)
+        : symptomClass.secondary_confidence || labConf;
+
+    return {
+      ...symptomClass,
+      secondary_type,
+      secondary_confidence,
+      all_confidences,
+    };
+  }
+
+  // High-confidence lab result: promote to primary, original primary becomes secondary
+  let secondary_type = originalPrimary !== mappedLabType ? originalPrimary : symptomClass.secondary_type;
+  let secondary_confidence =
+    originalPrimary !== mappedLabType ? originalPrimaryConf : symptomClass.secondary_confidence;
+
+  return {
+    ...symptomClass,
+    fever_type: mappedLabType,
+    primary_confidence: labConf,
+    secondary_type,
+    secondary_confidence,
+    all_confidences,
+  };
+}
+
+function buildFinalAssessment({
+  symptomPrediction,
+  labPrediction,
+  feverClassification,
+  combinedPrediction,
+}) {
+  const primaryCause =
+    labPrediction && labPrediction.confidence >= 0.7
+      ? {
+          label: labPrediction.fever_type,
+          source: "lab",
+          confidence: Math.round((labPrediction.confidence || 0) * 100),
+        }
+      : {
+          label: feverClassification.fever_type,
+          source: "symptoms_rules",
+          confidence: feverClassification.primary_confidence ?? Math.round((combinedPrediction.probability || 0) * 100),
+        };
+
+  const severityLabel = combinedPrediction.severity || symptomPrediction.severity;
+
+  return {
+    primary_cause_label: primaryCause.label,
+    primary_cause_confidence: primaryCause.confidence,
+    primary_cause_source: primaryCause.source,
+    infectious_primary: feverClassification.fever_type,
+    infectious_primary_confidence: feverClassification.primary_confidence,
+    infectious_secondary: feverClassification.secondary_type,
+    infectious_secondary_confidence: feverClassification.secondary_confidence,
+    severity_label: severityLabel,
+    symptom_model_confidence: Math.round((symptomPrediction.probability || 0) * 100),
+    lab_model_confidence: labPrediction ? Math.round((labPrediction.confidence || 0) * 100) : null,
+    lab_model_label: labPrediction ? labPrediction.fever_type : null,
+    lab_model_explanation: labPrediction ? labPrediction.explanation : null,
+    rationale: feverClassification.rationale,
+  };
 }
 
 export async function downloadReport(req, res) {

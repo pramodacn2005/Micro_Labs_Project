@@ -22,7 +22,10 @@ const THRESHOLDS = {
   spo2:      { min: Number(process.env.SPO2_MIN ?? 95), max: Number(process.env.SPO2_MAX ?? 100) },
   bodyTemp:  { min: Number(process.env.BTEMP_MIN ?? 36.1), max: Number(process.env.BTEMP_MAX ?? 37.2) },
   ambientTemp: { min: Number(process.env.ATEMP_MIN ?? -10), max: Number(process.env.ATEMP_MAX ?? 50) },
-  accMagnitude: { min: Number(process.env.ACC_MIN ?? 0), max: Number(process.env.ACC_MAX ?? 3) }
+  accMagnitude: { min: Number(process.env.ACC_MIN ?? 0), max: Number(process.env.ACC_MAX ?? 3) },
+  bloodSugar: { min: Number(process.env.BLOOD_SUGAR_MIN ?? 70), max: Number(process.env.BLOOD_SUGAR_MAX ?? 100) },
+  bloodPressureSystolic: { min: Number(process.env.BP_SYSTOLIC_MIN ?? 90), max: Number(process.env.BP_SYSTOLIC_MAX ?? 120) },
+  bloodPressureDiastolic: { min: Number(process.env.BP_DIASTOLIC_MIN ?? 60), max: Number(process.env.BP_DIASTOLIC_MAX ?? 80) }
 };
 
 const REPEAT_THRESHOLD = Number(process.env.REPEAT_THRESHOLD ?? 3);
@@ -43,6 +46,9 @@ function formatAlert(key, value, status) {
     case "bodyTemp": return `Body Temp: ${value}°C (${status === "warning" ? "Borderline" : "High/Low"})`;
     case "ambientTemp": return `Ambient Temp: ${value}°C (${status === "warning" ? "Borderline" : "Out of Range"})`;
     case "accMagnitude": return `Movement: ${value} (${status === "warning" ? "Borderline" : "Abnormal"})`;
+    case "bloodSugar": return `Blood Sugar: ${value} mg/dL (${status === "warning" ? "Borderline" : value < 70 ? "Low (Hypoglycemia)" : "High (Hyperglycemia)"})`;
+    case "bloodPressureSystolic": return `Blood Pressure (Systolic): ${value} mmHg (${status === "warning" ? "Borderline" : value < 90 ? "Low (Hypotension)" : "High (Hypertension)"})`;
+    case "bloodPressureDiastolic": return `Blood Pressure (Diastolic): ${value} mmHg (${status === "warning" ? "Borderline" : value < 60 ? "Low (Hypotension)" : "High (Hypertension)"})`;
     case "fallDetected": return "🚨 Emergency! Fall detected!";
     default: return `${key}: ${value} (${status})`;
   }

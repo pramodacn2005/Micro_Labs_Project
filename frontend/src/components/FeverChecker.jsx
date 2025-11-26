@@ -1,7 +1,17 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+import { Bar } from 'react-chartjs-2';
 import {
   ExclamationTriangleIcon,
   CheckCircleIcon,
@@ -19,6 +29,17 @@ import {
   ArrowDownTrayIcon,
 } from "@heroicons/react/24/outline";
 import { submitFeverCheck } from "../services/feverCheckService";
+import { useAuth } from "../contexts/AuthContext";
+
+// Register Chart.js components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend
+);
 
 const optionalNumber = z.preprocess(
   (value) => {
@@ -28,13 +49,70 @@ const optionalNumber = z.preprocess(
   z.number().optional()
 );
 
+// Temperature conversion functions
+const convertToCelsius = (value, unit) => {
+  if (value === null || value === undefined || isNaN(value)) return null;
+  switch (unit) {
+    case "F":
+      return (value - 32) * 5 / 9;
+    case "K":
+      return value - 273.15;
+    case "C":
+    default:
+      return value;
+  }
+};
+
+const getTemperatureRange = (unit) => {
+  switch (unit) {
+    case "F":
+      return { min: 86, max: 113 }; // ~30°C to 45°C
+    case "K":
+      return { min: 303, max: 318 }; // ~30°C to 45°C
+    case "C":
+    default:
+      return { min: 30, max: 45 };
+  }
+};
+
+const getTemperaturePlaceholder = (unit) => {
+  switch (unit) {
+    case "F":
+      return "e.g., 101.3";
+    case "K":
+      return "e.g., 311.65";
+    case "C":
+    default:
+      return "e.g., 38.5";
+  }
+};
+
+// Respiratory rate conversion: selection to numeric value
+const getRespiratoryRateValue = (selection) => {
+  if (!selection || selection === "") return null;
+  switch (selection) {
+    case "difficulty":
+      return 8; // Representative value for 5-11 breaths/min (slow/shallow breathing)
+    case "normal":
+      return 16; // Representative value for 12-20 breaths/min (normal)
+    case "fast":
+      return 24; // Representative value for 21-30+ breaths/min (fast breathing/tachypnea)
+    default:
+      return null;
+  }
+};
+
 const formSchema = z.object({
   age: z.coerce.number().min(0, "Age is required"),
+  age_unit: z.enum(["years", "months"], {
+    errorMap: () => ({ message: "Please select age unit (years or months)" }),
+  }),
   gender: z.enum(["Male", "Female", "Other", "Prefer not to say"]),
   body_temperature_value: optionalNumber,
-  body_temperature_unit: z.enum(["C", "F"]),
+  body_temperature_unit: z.enum(["C", "F", "K"]),
   heart_rate_bpm: optionalNumber,
-  respiratory_rate_bpm: optionalNumber,
+  respiratory_rate: z.enum(["difficulty", "normal", "fast"]).optional(),
+  respiratory_rate_bpm: optionalNumber, // Keep for backward compatibility
   spo2: optionalNumber,
   bp_systolic: optionalNumber,
   bp_diastolic: optionalNumber,
@@ -61,9 +139,9 @@ const formSchema = z.object({
 });
 
 const tooltip = {
-  temperature: "Enter temperature in Celsius only. Normal adult oral temp: 36.1–37.2°C.",
+  temperature: "Enter temperature in Celsius (°C), Fahrenheit (°F), or Kelvin (K). Normal adult oral temp: 36.1–37.2°C (97–99°F, 309–310K). The value will be automatically converted to Celsius for analysis.",
   heartRate: "Resting heart rate: 60–100 bpm for most adults.",
-  respiratoryRate: "Normal adult range: 12–20 breaths/min.",
+  respiratoryRate: "Select based on breathing pattern: Difficulty in breathing (5-11 breaths/min), Normal (12-20 breaths/min), or Fast breathing (21-30+ breaths/min).",
   spo2: "Healthy adults typically 95–100%.",
   bloodPressure: "Desired adult BP: around 120/80 mmHg.",
 };
@@ -111,7 +189,7 @@ function SectionHeading({ title, description, icon: Icon }) {
   );
 }
 
-function Tooltip({ text }) {
+function InfoTooltip({ text }) {
   return (
     <span
       className="ml-1.5 inline-flex items-center cursor-help text-gray-400 hover:text-gray-600 transition-colors"
@@ -130,7 +208,7 @@ function FormField({ label, error, children, required, tooltipText, className = 
       <label className="block text-sm font-medium text-gray-700 mb-1.5">
         {label}
         {required && <span className="text-red-500 ml-1">*</span>}
-        {tooltipText && <Tooltip text={tooltipText} />}
+        {tooltipText && <InfoTooltip text={tooltipText} />}
       </label>
       {children}
       {error && <p className="mt-1.5 text-xs text-red-600">{error.message}</p>}
@@ -138,20 +216,32 @@ function FormField({ label, error, children, required, tooltipText, className = 
   );
 }
 
-export default function FeverChecker() {
+export default function FeverChecker({ labValues = null, labUploadInfo = null }) {
+  const { user, userData, refreshUserData } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [location, setLocation] = useState({ lat: null, lon: null });
   const [error, setError] = useState("");
+  const [persistMessage, setPersistMessage] = useState("");
+  const [storedAnalysisMeta, setStoredAnalysisMeta] = useState(null);
+  const [isResetting, setIsResetting] = useState(false);
+  const labDetectedCount = useMemo(() => {
+    if (!labValues) return 0;
+    return Object.values(labValues).filter(
+      (v) => v !== null && typeof v !== "undefined"
+    ).length;
+  }, [labValues]);
 
   const defaultValues = useMemo(
     () => ({
       age: "",
+      age_unit: "years",
       gender: "Male",
       body_temperature_value: "",
-      body_temperature_unit: "C", // Always Celsius, hidden from UI
+      body_temperature_unit: "C", // Default to Celsius
       heart_rate_bpm: "",
-      respiratory_rate_bpm: "",
+      respiratory_rate: "", // New selection-based field
+      respiratory_rate_bpm: "", // Keep for backward compatibility
       spo2: "",
       bp_systolic: "",
       bp_diastolic: "",
@@ -182,14 +272,39 @@ export default function FeverChecker() {
     handleSubmit,
     watch,
     setValue,
+    reset,
     formState: { errors },
   } = useForm({
     defaultValues,
     resolver: zodResolver(formSchema),
+    mode: "onBlur", // Only validate on blur, not on every keystroke
   });
 
   const medicalHistoryChecked = watch("medical_history");
   const bodyPainScale = watch("body_pain_scale");
+  const ageUnit = watch("age_unit") || "years";
+
+  useEffect(() => {
+    if (!userData?.feverAnalysis) {
+      setStoredAnalysisMeta(null);
+      return;
+    }
+    const stored = userData.feverAnalysis;
+    if (stored.formValues) {
+      reset({
+        ...defaultValues,
+        ...stored.formValues,
+        consent: false,
+      });
+    }
+    if (stored.result) {
+      setResult(stored.result);
+    }
+    setStoredAnalysisMeta({
+      savedAt: stored.savedAt || null,
+    });
+  }, [userData, reset, defaultValues]);
+  const temperatureUnit = watch("body_temperature_unit") || "C";
 
   const buildPayload = (values) => {
     const maybeNumber = (val) =>
@@ -202,18 +317,32 @@ export default function FeverChecker() {
         : undefined;
 
     const tempValue = maybeNumber(values.body_temperature_value);
-    const bodyTemperature = tempValue != null
+    // Convert temperature to Celsius for backend
+    const tempInCelsius = tempValue != null 
+      ? convertToCelsius(tempValue, values.body_temperature_unit)
+      : null;
+    const bodyTemperature = tempInCelsius != null
       ? {
-          temperature_value: tempValue,
-          temperature_unit: "C", // Always Celsius
+          temperature_value: tempInCelsius,
+          temperature_unit: "C", // Always send Celsius to backend
         }
       : undefined;
 
+    // Convert age to years for backend (if months, divide by 12)
+    const ageValue = Number(values.age);
+    const ageInYears = values.age_unit === "months" 
+      ? ageValue / 12 
+      : ageValue;
+
     const payload = {
-      age: Number(values.age),
+      age: ageInYears,
+      age_unit: values.age_unit, // Also send the unit for reference
+      age_original: ageValue, // Original value before conversion
       gender: values.gender,
       heart_rate_bpm: maybeNumber(values.heart_rate_bpm),
-      respiratory_rate_bpm: maybeNumber(values.respiratory_rate_bpm),
+      respiratory_rate_bpm: values.respiratory_rate 
+        ? getRespiratoryRateValue(values.respiratory_rate)
+        : maybeNumber(values.respiratory_rate_bpm), // Use selection if provided, otherwise fallback to direct input
       spo2: maybeNumber(values.spo2),
       bp_systolic: maybeNumber(values.bp_systolic),
       bp_diastolic: maybeNumber(values.bp_diastolic),
@@ -241,7 +370,77 @@ export default function FeverChecker() {
       payload.body_temperature = bodyTemperature;
     }
 
+    if (labValues && Object.keys(labValues).length > 0) {
+      payload.lab_values = labValues;
+    }
+    if (labUploadInfo?.uploadId) {
+      payload.lab_upload_id = labUploadInfo.uploadId;
+    }
+
     return payload;
+  };
+
+  const persistFeverAnalysis = async (formValues, analysisResult) => {
+    if (!user?.uid) return;
+    try {
+      setPersistMessage("Saving analysis...");
+      const firestoreModule = await import("firebase/firestore");
+      const { getFirestore, doc, setDoc } = firestoreModule;
+      const firestore = getFirestore();
+      const userDocRef = doc(firestore, "users", user.uid);
+
+      const storedFormValues = {
+        ...formValues,
+        consent: false,
+      };
+
+      const payload = {
+        savedAt: new Date().toISOString(),
+        formValues: storedFormValues,
+        result: analysisResult,
+      };
+
+      await setDoc(
+        userDocRef,
+        { feverAnalysis: payload },
+        { merge: true }
+      );
+
+      setPersistMessage("Analysis saved to profile.");
+      setStoredAnalysisMeta({ savedAt: payload.savedAt });
+      await refreshUserData();
+    } catch (err) {
+      console.error("Failed to persist fever analysis:", err);
+      setPersistMessage("Unable to store analysis in profile.");
+    }
+  };
+
+  const handleResetStoredAnalysis = async () => {
+    setIsResetting(true);
+    setPersistMessage("");
+    try {
+      if (user?.uid) {
+        const firestoreModule = await import("firebase/firestore");
+        const { getFirestore, doc, setDoc, deleteField } = firestoreModule;
+        const firestore = getFirestore();
+        const userDocRef = doc(firestore, "users", user.uid);
+        await setDoc(
+          userDocRef,
+          { feverAnalysis: deleteField() },
+          { merge: true }
+        );
+        await refreshUserData();
+      }
+      reset(defaultValues);
+      setResult(null);
+      setStoredAnalysisMeta(null);
+      setLocation({ lat: null, lon: null });
+    } catch (err) {
+      console.error("Failed to reset fever analysis:", err);
+      setError("Unable to reset fever analysis. Please try again.");
+    } finally {
+      setIsResetting(false);
+    }
   };
 
   const onSubmit = async (values) => {
@@ -252,6 +451,11 @@ export default function FeverChecker() {
     try {
       const response = await submitFeverCheck(payload);
       setResult(response);
+      if (user?.uid) {
+        await persistFeverAnalysis(values, response);
+      } else {
+        setPersistMessage("Log in to save this analysis for later.");
+      }
       // Scroll to results
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (err) {
@@ -302,6 +506,7 @@ export default function FeverChecker() {
         body_temperature_value: 39.5,
         body_temperature_unit: "C",
         heart_rate_bpm: 110,
+        respiratory_rate: "fast", // 22 breaths/min
         respiratory_rate_bpm: 22,
         spo2: 96,
         bp_systolic: 130,
@@ -327,18 +532,19 @@ export default function FeverChecker() {
       }
     },
     moderateFever: {
-      name: "Moderate Fever (38.5°C)",
+      name: "Moderate Fever (38.6°C)",
       description: "Moderate fever with typical flu symptoms",
       data: {
-        age: 30,
+        age: 24,
         gender: "Male",
-        body_temperature_value: 38.5,
+        body_temperature_value: 38.6,
         body_temperature_unit: "C",
-        heart_rate_bpm: 95,
-        respiratory_rate_bpm: 20,
-        spo2: 97,
-        bp_systolic: 125,
-        bp_diastolic: 80,
+        heart_rate_bpm: 102,
+        respiratory_rate: "fast", // 22 breaths/min
+        respiratory_rate_bpm: 22,
+        spo2: 96,
+        bp_systolic: 112,
+        bp_diastolic: 74,
         chills: true,
         sweating: true,
         loss_of_appetite: true,
@@ -347,7 +553,7 @@ export default function FeverChecker() {
         nasal_congestion: true,
         vomiting: false,
         fatigue: "moderate",
-        headache: "moderate",
+        headache: "mild",
         body_aches: "moderate",
         breathing_difficulty: "none",
         cough: "dry",
@@ -355,7 +561,7 @@ export default function FeverChecker() {
         alcohol_consumption: "none",
         medical_history: false,
         medical_history_text: "",
-        location_city: "Kolkata",
+        location_city: "Vijayanagar, Bengaluru",
         consent: true,
       }
     },
@@ -368,6 +574,7 @@ export default function FeverChecker() {
         body_temperature_value: 36.8,
         body_temperature_unit: "C",
         heart_rate_bpm: 72,
+        respiratory_rate: "normal", // 16 breaths/min
         respiratory_rate_bpm: 16,
         spo2: 98,
         bp_systolic: 120,
@@ -401,6 +608,7 @@ export default function FeverChecker() {
         body_temperature_value: 40.2,
         body_temperature_unit: "C",
         heart_rate_bpm: 125,
+        respiratory_rate: "fast", // 28 breaths/min
         respiratory_rate_bpm: 28,
         spo2: 92,
         bp_systolic: 140,
@@ -424,6 +632,76 @@ export default function FeverChecker() {
         location_city: "Delhi",
         consent: true,
       }
+    },
+    babyFever: {
+      name: "Baby with Fever (6 months)",
+      description: "Infant with fever - demonstrates age in months",
+      data: {
+        age: 6,
+        age_unit: "months",
+        gender: "Male",
+        body_temperature_value: 38.5,
+        body_temperature_unit: "C",
+        heart_rate_bpm: 140,
+        respiratory_rate: "fast", // 30 breaths/min
+        respiratory_rate_bpm: 30,
+        spo2: 97,
+        bp_systolic: 90,
+        bp_diastolic: 60,
+        chills: true,
+        sweating: false,
+        loss_of_appetite: true,
+        sore_throat: false,
+        runny_nose: true,
+        nasal_congestion: true,
+        vomiting: true,
+        fatigue: "moderate",
+        headache: "none",
+        body_aches: "none",
+        breathing_difficulty: "mild",
+        cough: "wet",
+        body_pain_scale: 3,
+        alcohol_consumption: "none",
+        medical_history: false,
+        medical_history_text: "",
+        location_city: "Chennai",
+        consent: true,
+      }
+    },
+    fahrenheitFever: {
+      name: "Fever in Fahrenheit (101.3°F)",
+      description: "Demonstrates temperature input in Fahrenheit",
+      data: {
+        age: 35,
+        age_unit: "years",
+        gender: "Female",
+        body_temperature_value: 101.3,
+        body_temperature_unit: "F",
+        heart_rate_bpm: 95,
+        respiratory_rate: "normal", // 20 breaths/min
+        respiratory_rate_bpm: 20,
+        spo2: 97,
+        bp_systolic: 118,
+        bp_diastolic: 78,
+        chills: true,
+        sweating: false,
+        loss_of_appetite: true,
+        sore_throat: true,
+        runny_nose: false,
+        nasal_congestion: false,
+        vomiting: false,
+        fatigue: "mild",
+        headache: "mild",
+        body_aches: "mild",
+        breathing_difficulty: "none",
+        cough: "dry",
+        body_pain_scale: 4,
+        alcohol_consumption: "none",
+        medical_history: false,
+        medical_history_text: "",
+        location_city: "Mumbai",
+        consent: true,
+      }
     }
   };
 
@@ -435,10 +713,12 @@ export default function FeverChecker() {
     
     // Set all form values
     setValue("age", data.age);
+    setValue("age_unit", data.age_unit || (data.age < 2 ? "months" : "years")); // Default to months if age < 2, otherwise years
     setValue("gender", data.gender);
     setValue("body_temperature_value", data.body_temperature_value);
     setValue("body_temperature_unit", data.body_temperature_unit);
     setValue("heart_rate_bpm", data.heart_rate_bpm);
+    setValue("respiratory_rate", data.respiratory_rate || ""); // Set new selection field
     setValue("respiratory_rate_bpm", data.respiratory_rate_bpm);
     setValue("spo2", data.spo2);
     setValue("bp_systolic", data.bp_systolic);
@@ -490,12 +770,33 @@ export default function FeverChecker() {
         {/* Header */}
       <div className="mb-8">
         <div className="rounded-2xl bg-gradient-to-br from-primary-600 via-primary-500 to-primary-700 p-8 text-white shadow-xl">
-          <h1 className="text-3xl font-bold mb-3">Fever Symptoms Checker</h1>
+          <h1 className="text-3xl font-bold mb-3">Fever Prediction</h1>
           <p className="text-primary-50 text-base max-w-3xl leading-relaxed">
             Collect key symptom parameters, estimate fever probability & severity, preview AI guidance, and generate an encrypted PDF report.
           </p>
         </div>
       </div>
+
+      {labUploadInfo && (
+        <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 flex flex-col gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold text-emerald-900">
+                Lab report linked: {labUploadInfo.file?.name || "Report"}
+              </p>
+              <p className="text-xs text-emerald-800">
+                {labDetectedCount > 0
+                  ? `Detected ${labDetectedCount} clinical parameter${labDetectedCount === 1 ? "" : "s"} (` +
+                    `${labUploadInfo.provider?.replace("_", " ")} OCR)`
+                  : "No parameters detected yet. You can still fill values manually."}
+              </p>
+            </div>
+            <span className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+              Auto-attached to analysis
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Demo Data Loader */}
       <div className="mb-6 bg-blue-50 border border-blue-200 rounded-xl p-4">
@@ -506,7 +807,7 @@ export default function FeverChecker() {
           </div>
           <button
             type="button"
-            onClick={() => loadDemoData('highFever')}
+            onClick={() => loadDemoData('moderateFever')}
             className="px-6 py-2.5 text-sm font-semibold text-white bg-blue-600 border border-blue-700 rounded-lg hover:bg-blue-700 hover:border-blue-800 transition-colors shadow-md flex items-center gap-2"
           >
             <ArrowDownTrayIcon className="w-4 h-4" />
@@ -514,7 +815,7 @@ export default function FeverChecker() {
           </button>
         </div>
         <p className="text-xs text-blue-700 mt-2">
-          Click the button above to automatically fill the form with demo test data (High Fever - 39.5°C) for presentations.
+          Click the button above to automatically fill the form with demo test data (Moderate Fever - 38.6°C) for presentations.
         </p>
       </div>
 
@@ -527,16 +828,30 @@ export default function FeverChecker() {
             icon={UserIcon}
           />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <FormField label="Age" error={errors.age} required>
-              <input
-                type="number"
-                min="0"
-                max="120"
-                {...register("age")}
-                className={`${inputBase} ${errors.age ? inputError : ""}`}
-                placeholder="Enter age in years"
-                aria-required="true"
-              />
+            <FormField label="Age" error={errors.age || errors.age_unit} required>
+              <div className="flex gap-2">
+                <select
+                  {...register("age_unit")}
+                  className={`${inputBase} ${errors.age_unit ? inputError : ""} flex-[12] text-xs py-1.5`}
+                  aria-label="Age unit"
+                >
+                  <option value="years">Years</option>
+                  <option value="months">Months</option>
+                </select>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  {...register("age")}
+                  className={`${inputBase} ${errors.age ? inputError : ""} flex-[4]`}
+                  placeholder={ageUnit === "months" ? "e.g., 6" : "e.g., 25"}
+                  aria-required="true"
+                />
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                {ageUnit === "months" 
+                  ? "Suitable for babies and infants (e.g., 6 months)" 
+                  : "For children and adults"}
+              </p>
             </FormField>
             <FormField label="Gender" error={errors.gender}>
               <div className="grid grid-cols-2 gap-3">
@@ -567,22 +882,34 @@ export default function FeverChecker() {
             icon={HeartIcon}
           />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Temperature - Celsius Only */}
+            {/* Temperature - Multiple Units */}
             <FormField 
-              label="Body Temperature (°C)" 
-              error={errors.body_temperature_value}
+              label="Body Temperature" 
+              error={errors.body_temperature_value || errors.body_temperature_unit}
               tooltipText={tooltip.temperature}
             >
-              <input
-                type="number"
-                step="0.1"
-                min="30"
-                max="45"
-                {...register("body_temperature_value")}
-                className={`${inputBase} ${errors.body_temperature_value ? inputError : ""}`}
-                placeholder="e.g., 38.5"
-                aria-label="Body temperature in Celsius"
-              />
+              <div className="flex gap-2">
+                <select
+                  {...register("body_temperature_unit")}
+                  className={`${inputBase} ${errors.body_temperature_unit ? inputError : ""} w-40 text-sm py-2`}
+                  aria-label="Temperature unit"
+                >
+                  <option value="C">°C</option>
+                  <option value="F">°F</option>
+                  <option value="K">K</option>
+                </select>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  {...register("body_temperature_value")}
+                  className={`${inputBase} ${errors.body_temperature_value ? inputError : ""} w-20`}
+                  placeholder={getTemperaturePlaceholder(temperatureUnit)}
+                  aria-label="Body temperature"
+                />
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Normal ranges: 36.1-37.2°C (97-99°F, 309-310K)
+              </p>
             </FormField>
 
             <FormField label="Heart Rate (bpm)" tooltipText={tooltip.heartRate}>
@@ -596,15 +923,45 @@ export default function FeverChecker() {
               />
             </FormField>
 
-            <FormField label="Respiratory Rate (breaths/min)" tooltipText={tooltip.respiratoryRate}>
+            <FormField label="Respiratory Rate" tooltipText={tooltip.respiratoryRate}>
+              <div className="grid grid-cols-3 gap-3">
+                <label className="flex flex-col gap-2 p-4 rounded-lg border border-gray-200 hover:border-primary-300 hover:bg-primary-50/50 cursor-pointer transition-colors">
               <input
-                type="number"
-                min="5"
-                max="80"
-                {...register("respiratory_rate_bpm")}
-                className={inputBase}
-                placeholder="e.g., 16"
-              />
+                    type="radio"
+                    value="difficulty"
+                    {...register("respiratory_rate")}
+                    className="w-4 h-4 text-primary-600 focus:ring-primary-500"
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-700">Difficulty in Breathing</span>
+                    <span className="text-xs text-gray-500 mt-1">5-11 breaths/min</span>
+                  </div>
+                </label>
+                <label className="flex flex-col gap-2 p-4 rounded-lg border border-gray-200 hover:border-primary-300 hover:bg-primary-50/50 cursor-pointer transition-colors">
+                  <input
+                    type="radio"
+                    value="normal"
+                    {...register("respiratory_rate")}
+                    className="w-4 h-4 text-primary-600 focus:ring-primary-500"
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-700">Normal</span>
+                    <span className="text-xs text-gray-500 mt-1">12-20 breaths/min</span>
+                  </div>
+                </label>
+                <label className="flex flex-col gap-2 p-4 rounded-lg border border-gray-200 hover:border-primary-300 hover:bg-primary-50/50 cursor-pointer transition-colors">
+                  <input
+                    type="radio"
+                    value="fast"
+                    {...register("respiratory_rate")}
+                    className="w-4 h-4 text-primary-600 focus:ring-primary-500"
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-700">Fast Breathing</span>
+                    <span className="text-xs text-gray-500 mt-1">21-30+ breaths/min</span>
+                  </div>
+                </label>
+              </div>
             </FormField>
 
             <FormField label="Oxygen Saturation (SpO₂ %)" tooltipText={tooltip.spo2}>
@@ -890,6 +1247,142 @@ export default function FeverChecker() {
       {/* Results Section */}
       {result && (
         <section className={`${sectionGap} mt-8 animate-in fade-in duration-500`}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+            <div className="text-xs sm:text-sm text-gray-600">
+              {storedAnalysisMeta?.savedAt ? (
+                <>
+                  Saved to profile on{" "}
+                  <span className="font-semibold text-gray-800">
+                    {new Date(storedAnalysisMeta.savedAt).toLocaleString()}
+                  </span>
+                </>
+              ) : (
+                persistMessage || "Run the analysis while logged in to store it to your profile."
+              )}
+              {persistMessage && storedAnalysisMeta?.savedAt && (
+                <p className="text-primary-600 text-xs mt-1">{persistMessage}</p>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleResetStoredAnalysis}
+                className={buttonSecondary}
+                disabled={isResetting}
+              >
+                {isResetting ? "Resetting..." : "Reset"}
+              </button>
+            </div>
+          </div>
+          {/* Patient Information Summary */}
+          <div className="rounded-xl border-2 border-gray-200 bg-white p-6 shadow-md mb-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <UserIcon className="w-5 h-5 text-primary-600" />
+              Patient Information
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Age</p>
+                <p className="text-sm font-semibold text-gray-900">
+                  {(() => {
+                    const age = watch("age");
+                    const ageUnit = watch("age_unit");
+                    if (age) {
+                      return `${age} ${ageUnit === "months" ? "months" : "years"}`;
+                    }
+                    return "Not provided";
+                  })()}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Gender</p>
+                <p className="text-sm font-semibold text-gray-900">{watch("gender") || "Not provided"}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Temperature</p>
+                <p className="text-sm font-semibold text-gray-900">
+                  {(() => {
+                    const temp = watch("body_temperature_value");
+                    const tempUnit = watch("body_temperature_unit");
+                    if (temp) {
+                      const unitSymbol = tempUnit === "C" ? "°C" : tempUnit === "F" ? "°F" : "K";
+                      return `${temp} ${unitSymbol}`;
+                    }
+                    return "Not provided";
+                  })()}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Heart Rate</p>
+                <p className="text-sm font-semibold text-gray-900">
+                  {watch("heart_rate_bpm") ? `${watch("heart_rate_bpm")} bpm` : "Not provided"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Final Combined Assessment */}
+          {result.final_assessment && (
+            <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50 p-6 shadow-lg">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900 mb-1">Final AI Assessment</h2>
+                  <p className="text-sm text-gray-700">
+                    Most likely cause of fever:{" "}
+                    <span className="font-semibold">
+                      {result.final_assessment.primary_cause_label}
+                    </span>{" "}
+                    ({result.final_assessment.primary_cause_confidence}% confidence)
+                  </p>
+                  <p className="text-sm text-gray-700 mt-1">
+                    Severity: <span className="font-semibold">{result.final_assessment.severity_label}</span>
+                  </p>
+                  {result.final_assessment.lab_model_explanation && (
+                    <p className="text-xs text-indigo-900 mt-2">
+                      Lab rationale: {result.final_assessment.lab_model_explanation}
+                    </p>
+                  )}
+                  {result.final_assessment.rationale && (
+                    <p className="text-xs text-gray-700 mt-1">
+                      Symptom pattern: {result.final_assessment.rationale}
+                    </p>
+                  )}
+                </div>
+                <div className="text-xs text-gray-600 space-y-1">
+                  <p className="font-semibold text-gray-800">Model confidences</p>
+                  <p>
+                    Symptom model:{" "}
+                    {result.final_assessment.symptom_model_confidence != null
+                      ? `${result.final_assessment.symptom_model_confidence}%`
+                      : "N/A"}
+                  </p>
+                  <p>
+                    Lab report model:{" "}
+                    {result.final_assessment.lab_model_confidence != null
+                      ? `${result.final_assessment.lab_model_confidence}%`
+                      : "N/A"}
+                  </p>
+                  <p>
+                    Infectious pattern: {result.final_assessment.infectious_primary}{" "}
+                    {result.final_assessment.infectious_primary_confidence != null &&
+                      `(${result.final_assessment.infectious_primary_confidence}%)`}
+                  </p>
+                  {result.final_assessment.infectious_secondary && (
+                    <p>
+                      Secondary: {result.final_assessment.infectious_secondary}{" "}
+                      {result.final_assessment.infectious_secondary_confidence != null &&
+                        `(${result.final_assessment.infectious_secondary_confidence}%)`}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <p className="text-[11px] text-gray-500 mt-3">
+                This combined assessment uses both your symptom pattern and lab report features. It is
+                not a medical diagnosis; always confirm with a clinician.
+              </p>
+            </div>
+          )}
+
           {/* Prediction Result Card with Severity Badge */}
           {(() => {
             const probability = result.prediction.probability;
@@ -1000,6 +1493,254 @@ export default function FeverChecker() {
               </div>
             );
           })()}
+
+          {(result.lab_prediction || result.symptom_prediction) && (
+            <div className="grid gap-4 md:grid-cols-2">
+              {result.symptom_prediction && (
+                <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                  <p className="text-xs uppercase text-gray-500 font-semibold mb-1">Symptom model</p>
+                  <p className="text-lg font-bold text-gray-900">{result.symptom_prediction.label}</p>
+                  <p className="text-sm text-gray-600">
+                    Confidence: {(result.symptom_prediction.probability * 100).toFixed(1)}%
+                  </p>
+                </div>
+              )}
+              {result.lab_prediction && (
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 shadow-sm">
+                  <p className="text-xs uppercase text-indigo-600 font-semibold mb-1">Lab report model</p>
+                  <p className="text-lg font-bold text-indigo-900">{result.lab_prediction.fever_type}</p>
+                  <p className="text-sm text-indigo-800">
+                    Confidence: {(result.lab_prediction.confidence * 100).toFixed(1)}%
+                  </p>
+                  {result.lab_prediction.explanation && (
+                    <p className="text-xs text-indigo-700 mt-2">{result.lab_prediction.explanation}</p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Fever Type Classification Card */}
+          {result.fever_classification && (
+            <div className="rounded-xl border-2 border-primary-200 bg-gradient-to-br from-primary-50 to-white p-6 shadow-lg">
+              <div className="flex items-center gap-2 mb-4">
+                <BeakerIcon className="w-6 h-6 text-primary-600" />
+                <h2 className="text-xl font-semibold text-gray-900">Fever Type Classification</h2>
+              </div>
+              
+              {/* Primary Classification */}
+              <div className="mb-6 p-4 rounded-lg bg-white border-2 border-primary-300 shadow-sm">
+                <div className="flex items-center justify-between flex-wrap gap-3 mb-2">
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">
+                      {result.fever_classification.fever_type}
+                    </h3>
+                    {result.fever_classification.secondary_type && (
+                      <p className="text-sm text-gray-600 mt-1">
+                        Secondary: {result.fever_classification.secondary_type}
+                        {result.fever_classification.secondary_confidence && (
+                          <span className="ml-2 text-primary-600 font-medium">
+                            ({result.fever_classification.secondary_confidence}% confidence)
+                          </span>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-bold text-primary-600">
+                      {result.fever_classification.primary_confidence}%
+                    </div>
+                    <div className="text-xs text-gray-500">Confidence</div>
+                  </div>
+                </div>
+                {result.fever_classification.rationale && (
+                  <p className="text-sm text-gray-700 mt-3 pt-3 border-t border-gray-200">
+                    {result.fever_classification.rationale}
+                  </p>
+                )}
+              </div>
+
+              {/* All Fever Types Confidence Chart - Bar Chart */}
+              {result.fever_classification.all_confidences && (() => {
+                const allConfidences = result.fever_classification.all_confidences;
+                const primaryType = result.fever_classification.fever_type;
+                const secondaryType = result.fever_classification.secondary_type;
+                
+                // Sort by confidence (highest first)
+                const sortedEntries = Object.entries(allConfidences)
+                  .sort(([, a], [, b]) => b - a);
+                
+                const labels = sortedEntries.map(([type]) => type);
+                const dataValues = sortedEntries.map(([type, confidence]) => confidence);
+                
+                // Color coding: Primary = blue, Secondary = orange, High confidence = red/orange, Medium = yellow, Low = gray
+                const backgroundColors = sortedEntries.map(([type, confidence]) => {
+                  if (type === primaryType) {
+                    return '#3B82F6'; // Blue for primary
+                  } else if (type === secondaryType) {
+                    return '#F97316'; // Orange for secondary
+                  } else if (confidence >= 50) {
+                    return '#EF4444'; // Red for high confidence
+                  } else if (confidence >= 30) {
+                    return '#F59E0B'; // Amber for medium-high
+                  } else if (confidence >= 15) {
+                    return '#EAB308'; // Yellow for medium
+                  } else {
+                    return '#9CA3AF'; // Gray for low
+                  }
+                });
+                
+                const borderColors = sortedEntries.map(([type]) => {
+                  if (type === primaryType) {
+                    return '#2563EB'; // Darker blue border
+                  } else if (type === secondaryType) {
+                    return '#EA580C'; // Darker orange border
+                  }
+                  return '#6B7280'; // Gray border
+                });
+                
+                const borderWidths = sortedEntries.map(([type]) => {
+                  return (type === primaryType || type === secondaryType) ? 3 : 1;
+                });
+                
+                const chartData = {
+                  labels: labels,
+                  datasets: [
+                    {
+                      label: 'Confidence (%)',
+                      data: dataValues,
+                      backgroundColor: backgroundColors,
+                      borderColor: borderColors,
+                      borderWidth: borderWidths,
+                      borderRadius: 6,
+                      borderSkipped: false,
+                    },
+                  ],
+                };
+                
+                const chartOptions = {
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: {
+                      display: false,
+                    },
+                    tooltip: {
+                      backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                      padding: 12,
+                      titleFont: {
+                        size: 14,
+                        weight: 'bold',
+                      },
+                      bodyFont: {
+                        size: 13,
+                      },
+                      callbacks: {
+                        title: function(context) {
+                          return context[0].label;
+                        },
+                        label: function(context) {
+                          const typeName = context.label;
+                          const confidence = context.parsed.y;
+                          let label = `${confidence}% confidence`;
+                          if (typeName === primaryType) {
+                            label += ' (Primary Diagnosis)';
+                          } else if (typeName === secondaryType) {
+                            label += ' (Secondary Diagnosis)';
+                          }
+                          return label;
+                        },
+                      },
+                    },
+                  },
+                  scales: {
+                    y: {
+                      beginAtZero: true,
+                      max: 100,
+                      ticks: {
+                        stepSize: 10,
+                        callback: function(value) {
+                          return value + '%';
+                        },
+                        font: {
+                          size: 11,
+                        },
+                        color: '#6B7280',
+                      },
+                      grid: {
+                        color: 'rgba(0, 0, 0, 0.05)',
+                      },
+                      title: {
+                        display: true,
+                        text: 'Confidence Level (%)',
+                        font: {
+                          size: 12,
+                          weight: 'bold',
+                        },
+                        color: '#374151',
+                      },
+                    },
+                    x: {
+                      ticks: {
+                        font: {
+                          size: 11,
+                          weight: '500',
+                        },
+                        color: '#374151',
+                        maxRotation: 45,
+                        minRotation: 45,
+                      },
+                      grid: {
+                        display: false,
+                      },
+                    },
+                  },
+                };
+                
+                return (
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-700 mb-4 uppercase tracking-wide">
+                      All Fever Types Confidence Levels
+                    </h4>
+                    <div className="bg-white p-4 rounded-lg border border-gray-200">
+                      <div style={{ height: '400px', position: 'relative' }}>
+                        <Bar data={chartData} options={chartOptions} />
+                      </div>
+                    </div>
+                    {/* Legend */}
+                    <div className="mt-4 flex flex-wrap gap-4 justify-center text-xs">
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded bg-blue-500 border-2 border-blue-600"></div>
+                        <span className="text-gray-700 font-medium">Primary Diagnosis</span>
+                      </div>
+                      {secondaryType && (
+                        <div className="flex items-center gap-2">
+                          <div className="w-4 h-4 rounded bg-orange-500 border-2 border-orange-600"></div>
+                          <span className="text-gray-700 font-medium">Secondary Diagnosis</span>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded bg-red-500"></div>
+                        <span className="text-gray-700">High (≥50%)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded bg-amber-500"></div>
+                        <span className="text-gray-700">Medium (30-49%)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded bg-yellow-500"></div>
+                        <span className="text-gray-700">Low (15-29%)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-4 rounded bg-gray-400"></div>
+                        <span className="text-gray-700">Very Low (&lt;15%)</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
 
           {/* Emergency Warning for Very High Fever */}
           {result.prediction.probability >= 0.90 && (
@@ -1159,9 +1900,22 @@ export default function FeverChecker() {
 
           {/* Nearby Hospitals Card */}
           <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-md">
-            <div className="flex items-center gap-2 mb-4">
-              <MapPinIcon className="w-5 h-5 text-primary-600" />
-              <h3 className="text-lg font-semibold text-gray-900">Nearby Hospitals</h3>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <MapPinIcon className="w-5 h-5 text-primary-600" />
+                <h3 className="text-lg font-semibold text-gray-900">Nearby Hospitals</h3>
+              </div>
+              {(() => {
+                const location = result.location || (result.fever_classification ? null : null);
+                if (location) {
+                  if (location.city) {
+                    return <span className="text-sm text-gray-600">📍 {location.city}</span>;
+                  } else if (location.lat && location.lon) {
+                    return <span className="text-sm text-gray-600">📍 {location.lat.toFixed(4)}, {location.lon.toFixed(4)}</span>;
+                  }
+                }
+                return null;
+              })()}
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               {result.hospitals?.length ? (
@@ -1205,7 +1959,20 @@ export default function FeverChecker() {
                   </div>
                 ))
               ) : (
-                <p className="text-sm text-gray-500 col-span-2">No hospitals found for the provided location.</p>
+                <div className="col-span-2 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <p className="text-sm text-gray-700 mb-2">
+                    <strong>No hospitals found for the provided location.</strong>
+                  </p>
+                  {result.location ? (
+                    <p className="text-xs text-gray-600">
+                      Location used: {result.location.city || `${result.location.lat?.toFixed(4)}, ${result.location.lon?.toFixed(4)}`}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-gray-600">
+                      Please provide your city name or enable location services to find nearby hospitals.
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           </div>

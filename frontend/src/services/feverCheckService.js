@@ -6,8 +6,8 @@ function getApiBase() {
     // If env URL doesn't end with /api, add it
     return envUrl.endsWith("/api") ? envUrl : `${envUrl.replace(/\/$/, "")}/api`;
   }
-  // Default to port 3000 (backend default from .env)
-  return "http://localhost:3000/api";
+  // Default to port 4000 (backend default from .env)
+  return "http://localhost:4000/api";
 }
 
 const API_BASE = getApiBase();

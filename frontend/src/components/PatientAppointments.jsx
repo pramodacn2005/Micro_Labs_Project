@@ -6,7 +6,8 @@ import {
   XMarkIcon,
   CheckCircleIcon,
   XCircleIcon,
-  ClockIcon as PendingIcon
+  ClockIcon as PendingIcon,
+  PhoneIcon
 } from '@heroicons/react/24/outline';
 import { getPatientAppointments, cancelAppointment } from '../services/appointmentService';
 import { useAuth } from '../contexts/AuthContext';
@@ -67,6 +68,14 @@ export default function PatientAppointments() {
       }
     } catch (err) {
       setError(err.message);
+    }
+  };
+
+  const handleCallDoctor = (phoneNumber) => {
+    if (phoneNumber) {
+      // Remove any non-digit characters except + for international numbers
+      const cleanPhone = phoneNumber.replace(/[^\d+]/g, '');
+      window.location.href = `tel:${cleanPhone}`;
     }
   };
 
@@ -197,6 +206,11 @@ export default function PatientAppointments() {
                             <span className="font-medium">Reason:</span> {appointment.reason}
                           </p>
                         )}
+                        {appointment.doctor?.phone && (
+                          <p className="text-sm text-gray-600 mt-1">
+                            <span className="font-medium">Phone:</span> {appointment.doctor.phone}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -207,15 +221,27 @@ export default function PatientAppointments() {
                       <StatusIcon className="w-4 h-4" />
                       <span>{appointment.status.charAt(0).toUpperCase() + appointment.status.slice(1)}</span>
                     </div>
-                    {appointment.status === 'pending' && (
-                      <button
-                        onClick={() => handleCancel(appointment.appointment_id)}
-                        className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center gap-1"
-                      >
-                        <XMarkIcon className="w-4 h-4" />
-                        Cancel
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {appointment.doctor?.phone && (
+                        <button
+                          onClick={() => handleCallDoctor(appointment.doctor.phone)}
+                          className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition-colors flex items-center gap-2"
+                          title={`Call ${appointment.doctor.name}`}
+                        >
+                          <PhoneIcon className="w-4 h-4" />
+                          Call
+                        </button>
+                      )}
+                      {appointment.status === 'pending' && (
+                        <button
+                          onClick={() => handleCancel(appointment.appointment_id)}
+                          className="text-red-600 hover:text-red-700 text-sm font-medium flex items-center gap-1"
+                        >
+                          <XMarkIcon className="w-4 h-4" />
+                          Cancel
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>

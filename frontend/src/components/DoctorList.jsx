@@ -5,7 +5,8 @@ import {
   MapPinIcon,
   StarIcon,
   UserIcon,
-  CalendarIcon
+  CalendarIcon,
+  PhoneIcon
 } from '@heroicons/react/24/outline';
 import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid';
 import { getDoctors } from '../services/appointmentService';
@@ -60,6 +61,14 @@ export default function DoctorList() {
     window.dispatchEvent(new CustomEvent('navigate', { 
       detail: { page: 'book-appointment', doctorId } 
     }));
+  };
+
+  const handleCallDoctor = (phoneNumber) => {
+    if (phoneNumber) {
+      // Remove any non-digit characters except + for international numbers
+      const cleanPhone = phoneNumber.replace(/[^\d+]/g, '');
+      window.location.href = `tel:${cleanPhone}`;
+    }
   };
 
   const renderStars = (rating) => {
@@ -226,6 +235,10 @@ export default function DoctorList() {
                   <div className="mb-4">
                     <h3 className="text-lg font-semibold text-gray-900 mb-1">{doctor.name}</h3>
                     <p className="text-sm text-primary-600 font-medium mb-2">{doctor.specialization}</p>
+                    {/* Unavailable Status - Small Red Text */}
+                    {doctor.availability_status === 'Unavailable' && (
+                      <p className="text-xs text-red-600 font-medium mb-2">Unavailable</p>
+                    )}
                     
                     {/* Rating */}
                     <div className="flex items-center gap-1 mb-2">
@@ -249,20 +262,38 @@ export default function DoctorList() {
                     </p>
                   </div>
 
-                  {/* Fee and Book Button Row */}
-                  <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-                    <div className="text-right">
-                      <p className="text-xs text-gray-500">Consultation Fee</p>
-                      <p className="text-lg font-bold text-blue-600">
-                        ₹{doctor.consultation_fee || 0}
-                      </p>
+                  {/* Fee and Action Buttons Row */}
+                  <div className="pt-4 border-t border-gray-100">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="text-left">
+                        <p className="text-xs text-gray-500">Consultation Fee</p>
+                        <p className="text-lg font-bold text-blue-600">
+                          ₹{doctor.consultation_fee || 0}
+                        </p>
+                      </div>
+                      {doctor.phone && (
+                        <button
+                          onClick={() => handleCallDoctor(doctor.phone)}
+                          className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 transition-colors flex items-center gap-2"
+                          title={`Call ${doctor.name}`}
+                        >
+                          <PhoneIcon className="w-5 h-5" />
+                          Call
+                        </button>
+                      )}
                     </div>
                     <button
                       onClick={() => handleBookAppointment(doctor.doctor_id)}
-                      className="bg-primary-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-primary-700 transition-colors flex items-center gap-2"
+                      disabled={doctor.availability_status === 'Unavailable'}
+                      className={`w-full px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 ${
+                        doctor.availability_status === 'Unavailable'
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'bg-primary-600 text-white hover:bg-primary-700'
+                      }`}
+                      title={doctor.availability_status === 'Unavailable' ? 'Doctor is currently unavailable' : 'Book an appointment'}
                     >
                       <CalendarIcon className="w-5 h-5" />
-                      Book
+                      {doctor.availability_status === 'Unavailable' ? 'Unavailable' : 'Book Appointment'}
                     </button>
                   </div>
                 </div>

@@ -5,10 +5,15 @@ import {
   UserIcon,
   CheckCircleIcon,
   XCircleIcon,
-  ClockIcon as PendingIcon
+  ClockIcon as PendingIcon,
+  DocumentArrowDownIcon,
+  PaperClipIcon,
+  EyeIcon,
+  DocumentTextIcon
 } from '@heroicons/react/24/outline';
 import { getDoctorAppointments, acceptAppointment, rejectAppointment, completeAppointment } from '../services/appointmentService';
 import { useAuth } from '../contexts/AuthContext';
+import PrescriptionModal from './PrescriptionModal';
 
 const STATUS_COLORS = {
   pending: 'bg-yellow-100 text-yellow-800',
@@ -24,6 +29,8 @@ export default function DoctorDashboard() {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('pending');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [showPrescriptionModal, setShowPrescriptionModal] = useState(false);
+  const [selectedAppointment, setSelectedAppointment] = useState(null);
 
   useEffect(() => {
     if (user?.uid) {
@@ -220,6 +227,96 @@ export default function DoctorDashboard() {
                           <span className="font-medium">Reason:</span> {appointment.reason}
                         </p>
                       )}
+                      {/* Medical Reports/Files Section */}
+                      {appointment.medical_reports && appointment.medical_reports.length > 0 && appointment.medical_files && appointment.medical_files.length === 0 && (
+                        <div className="mt-4 pt-4 border-t border-gray-200">
+                          <p className="text-xs text-amber-600">
+                            ⚠️ {appointment.medical_reports.length} file(s) attached but unable to load. Files may have been deleted.
+                          </p>
+                        </div>
+                      )}
+                      {appointment.medical_files && appointment.medical_files.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-gray-200">
+                          <div className="flex items-center gap-2 mb-2">
+                            <PaperClipIcon className="w-4 h-4 text-primary-600" />
+                            <span className="text-sm font-semibold text-gray-900">
+                              Medical Reports ({appointment.medical_files.length})
+                            </span>
+                          </div>
+                          <div className="space-y-2">
+                            {appointment.medical_files.map((file, idx) => (
+                              <div
+                                key={file.id || idx}
+                                className="flex items-center justify-between p-2 bg-gray-50 rounded-lg border border-gray-200"
+                              >
+                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                  <DocumentArrowDownIcon className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-gray-900 truncate">
+                                      {file.fileName || file.documentName || 'Medical Report'}
+                                    </p>
+                                    <p className="text-xs text-gray-500">
+                                      {file.fileSize} • {file.fileType || 'Document'}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  {file.viewUrl && (
+                                    <a
+                                      href={file.viewUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="p-1.5 text-primary-600 hover:bg-primary-50 rounded transition-colors"
+                                      title="View file"
+                                    >
+                                      <EyeIcon className="w-4 h-4" />
+                                    </a>
+                                  )}
+                                  {file.downloadUrl && (
+                                    <a
+                                      href={file.downloadUrl}
+                                      download
+                                      className="p-1.5 text-primary-600 hover:bg-primary-50 rounded transition-colors"
+                                      title="Download file"
+                                    >
+                                      <DocumentArrowDownIcon className="w-4 h-4" />
+                                    </a>
+                                  )}
+                                  {file.base64Data && !file.viewUrl && (
+                                    <button
+                                      onClick={() => {
+                                        // Open base64 data in new window
+                                        const newWindow = window.open('', '_blank');
+                                        if (newWindow) {
+                                          newWindow.document.write(`
+                                            <html>
+                                              <head>
+                                                <title>${file.fileName || 'Medical Report'}</title>
+                                                <style>
+                                                  body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+                                                  iframe { width: 100%; height: calc(100vh - 40px); border: none; }
+                                                </style>
+                                              </head>
+                                              <body>
+                                                <iframe src="${file.base64Data}" type="${file.fileType || 'application/pdf'}"></iframe>
+                                              </body>
+                                            </html>
+                                          `);
+                                          newWindow.document.close();
+                                        }
+                                      }}
+                                      className="p-1.5 text-primary-600 hover:bg-primary-50 rounded transition-colors"
+                                      title="View file"
+                                    >
+                                      <EyeIcon className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -249,13 +346,25 @@ export default function DoctorDashboard() {
                       </>
                     )}
                     {appointment.status === 'accepted' && (
-                      <button
-                        onClick={() => handleComplete(appointment.appointment_id)}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
-                      >
-                        <CheckCircleIcon className="w-4 h-4" />
-                        Mark Complete
-                      </button>
+                      <>
+                        <button
+                          onClick={() => {
+                            setSelectedAppointment(appointment);
+                            setShowPrescriptionModal(true);
+                          }}
+                          className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-2"
+                        >
+                          <DocumentTextIcon className="w-4 h-4" />
+                          Send Prescription
+                        </button>
+                        <button
+                          onClick={() => handleComplete(appointment.appointment_id)}
+                          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+                        >
+                          <CheckCircleIcon className="w-4 h-4" />
+                          Mark Complete
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -278,9 +387,29 @@ export default function DoctorDashboard() {
           </p>
         </div>
       )}
+
+      {/* Prescription Modal */}
+      {showPrescriptionModal && selectedAppointment && (
+        <PrescriptionModal
+          appointment={selectedAppointment}
+          doctorInfo={null} // You can fetch doctor info here if needed
+          onClose={() => {
+            setShowPrescriptionModal(false);
+            setSelectedAppointment(null);
+          }}
+          onSuccess={(prescription) => {
+            console.log('Prescription created:', prescription);
+            // Optionally reload appointments or show success message
+            loadAppointments();
+          }}
+        />
+      )}
     </div>
   );
 }
+
+
+
 
 
 

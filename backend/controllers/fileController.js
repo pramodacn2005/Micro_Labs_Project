@@ -1,39 +1,39 @@
 import express from "express";
 import multer from "multer";
-import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getStorage } from "firebase-admin/storage";
-import { getFirestore } from "firebase-admin/firestore";
+import { admin, db } from "../services/firebaseAdminService.js";
 import path from "path";
 import fs from "fs";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const router = express.Router();
 
-// Initialize Firebase Admin
-let app;
+// Get Firebase Storage instance
+// Use the centralized Firebase Admin instance
 let storage;
-let db;
+let storageBucket;
 
 try {
-  // Check if Firebase app already exists
-  const existingApps = getApps();
-  if (existingApps.length === 0) {
-    // Load service account key
-    const serviceAccount = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), "config", "serviceAccountKey.json"), "utf8")
-    );
-
-    app = initializeApp({
-      credential: cert(serviceAccount),
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "your-project-id.appspot.com"
-    });
+  // Get storage bucket name from env or use default based on project ID
+  const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || 
+                             path.join(process.cwd(), "config", "serviceAccountKey.json");
+  
+  if (fs.existsSync(serviceAccountPath)) {
+    const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, "utf8"));
+    // Use explicit bucket name: project-id.appspot.com
+    storageBucket = process.env.FIREBASE_STORAGE_BUCKET || `${serviceAccount.project_id}.appspot.com`;
   } else {
-    app = existingApps[0];
+    // Fallback if service account not found
+    storageBucket = process.env.FIREBASE_STORAGE_BUCKET || "ai-healthcare-robot.appspot.com";
   }
 
-  storage = getStorage(app);
-  db = getFirestore(app);
+  storage = getStorage(admin.app());
+  console.log(`[File Controller] Using storage bucket: ${storageBucket}`);
 } catch (error) {
-  console.error("Firebase initialization error:", error);
+  console.error("[File Controller] Firebase Storage initialization error:", error);
+  throw error;
 }
 
 // Configure multer for file uploads
@@ -80,8 +80,8 @@ router.post('/upload', upload.array('files', 10), async (req, res) => {
       const fileType = file.mimetype === 'application/pdf' ? 'PDF' : 'Image';
       const fileSize = (file.size / (1024 * 1024)).toFixed(1) + " MB";
       
-      // Create Firebase Storage reference
-      const bucket = storage.bucket();
+      // Create Firebase Storage reference with explicit bucket name
+      const bucket = storage.bucket(storageBucket);
       const fileRef = bucket.file(`patient-files/${patientName.replace(/\s+/g, '_')}/${fileId}_${fileName}`);
       
       // Upload file to Firebase Storage
@@ -130,9 +130,26 @@ router.post('/upload', upload.array('files', 10), async (req, res) => {
 
   } catch (error) {
     console.error('Upload error:', error);
+    
+    // Provide helpful error messages
+    let errorMessage = 'Failed to upload files';
+    let helpMessage = null;
+    
+    if (error.code === 404 || error.message.includes('does not exist') || error.message.includes('bucket')) {
+      errorMessage = 'Firebase Storage bucket does not exist. Firebase Storage may not be enabled.';
+      helpMessage = 'See ENABLE_FIREBASE_STORAGE.md for instructions to enable Firebase Storage.';
+      console.error('❌ Storage bucket not found:', storageBucket);
+      console.error('💡 Enable Firebase Storage: https://console.firebase.google.com/project/ai-healthcare-robot/storage');
+    } else if (error.code === 403 || error.message.includes('permission')) {
+      errorMessage = 'Permission denied. Service account may not have Storage Admin role.';
+      helpMessage = 'Grant Storage Admin role to the service account in Google Cloud Console.';
+    }
+    
     res.status(500).json({ 
-      error: 'Failed to upload files',
-      details: error.message 
+      error: errorMessage,
+      details: error.message,
+      help: helpMessage,
+      bucket: storageBucket
     });
   }
 });
@@ -210,7 +227,7 @@ router.delete('/:fileId', async (req, res) => {
     const fileData = fileDoc.data();
 
     // Delete from Firebase Storage
-    const bucket = storage.bucket();
+    const bucket = storage.bucket(storageBucket);
     const fileRef = bucket.file(fileData.storagePath);
     
     try {
@@ -251,7 +268,7 @@ router.get('/download/:fileId', async (req, res) => {
     const fileData = fileDoc.data();
 
     // Generate new signed URL
-    const bucket = storage.bucket();
+    const bucket = storage.bucket(storageBucket);
     const fileRef = bucket.file(fileData.storagePath);
     
     const [downloadUrl] = await fileRef.getSignedUrl({

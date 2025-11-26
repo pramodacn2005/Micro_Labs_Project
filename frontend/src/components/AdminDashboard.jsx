@@ -82,6 +82,27 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleUpdateDoctor = async (doctorData) => {
+    try {
+      if (!editingDoctor || !editingDoctor.doctor_id) {
+        setError('No doctor selected for editing');
+        return;
+      }
+
+      const response = await updateDoctor(editingDoctor.doctor_id, doctorData);
+      if (response.success) {
+        setEditingDoctor(null);
+        setError('');
+        loadData();
+        alert(`Doctor "${doctorData.name}" updated successfully!`);
+      } else {
+        setError(response.error || 'Failed to update doctor');
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to update doctor');
+    }
+  };
+
   const handleDeleteDoctor = async (doctorId) => {
     if (!window.confirm('Are you sure you want to deactivate this doctor?')) {
       return;
@@ -152,10 +173,14 @@ export default function AdminDashboard() {
             </button>
           </div>
 
-          {showAddDoctorForm && (
+          {(showAddDoctorForm || editingDoctor) && (
             <AddDoctorForm
-              onClose={() => setShowAddDoctorForm(false)}
-              onSave={handleAddDoctor}
+              editingDoctor={editingDoctor}
+              onClose={() => {
+                setShowAddDoctorForm(false);
+                setEditingDoctor(null);
+              }}
+              onSave={editingDoctor ? handleUpdateDoctor : handleAddDoctor}
             />
           )}
 
@@ -246,26 +271,69 @@ export default function AdminDashboard() {
 }
 
 // Add Doctor Form Component
-function AddDoctorForm({ onClose, onSave }) {
+function AddDoctorForm({ editingDoctor, onClose, onSave }) {
   const { user } = useAuth();
   const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    specialization: '',
-    experience_years: '',
-    qualifications: '',
-    about: '',
-    location: '',
-    consultation_fee: '',
-    availability_status: 'Available',
-    profile_photo_url: '',
-    working_hours: {}
+    name: editingDoctor?.name || '',
+    email: editingDoctor?.email || '',
+    phone: editingDoctor?.phone || '',
+    specialization: editingDoctor?.specialization || '',
+    experience_years: editingDoctor?.experience_years || '',
+    qualifications: editingDoctor?.qualifications?.join(', ') || '',
+    about: editingDoctor?.about || '',
+    location: editingDoctor?.location || '',
+    consultation_fee: editingDoctor?.consultation_fee || '',
+    availability_status: editingDoctor?.availability_status || 'Available',
+    profile_photo_url: editingDoctor?.profile_photo_url || '',
+    working_hours: editingDoctor?.working_hours || {}
   });
   const [errors, setErrors] = useState({});
-  const [photoPreview, setPhotoPreview] = useState(null);
+  const [photoPreview, setPhotoPreview] = useState(editingDoctor?.profile_photo_url || null);
   const [photoFile, setPhotoFile] = useState(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
+  // Update form data when editingDoctor changes
+  useEffect(() => {
+    if (editingDoctor) {
+      setFormData({
+        name: editingDoctor.name || '',
+        email: editingDoctor.email || '',
+        phone: editingDoctor.phone || '',
+        specialization: editingDoctor.specialization || '',
+        experience_years: editingDoctor.experience_years || '',
+        qualifications: Array.isArray(editingDoctor.qualifications) 
+          ? editingDoctor.qualifications.join(', ') 
+          : (editingDoctor.qualifications || ''),
+        about: editingDoctor.about || '',
+        location: editingDoctor.location || '',
+        consultation_fee: editingDoctor.consultation_fee || '',
+        availability_status: editingDoctor.availability_status || 'Available',
+        profile_photo_url: editingDoctor.profile_photo_url || '',
+        working_hours: editingDoctor.working_hours || {}
+      });
+      if (editingDoctor.profile_photo_url) {
+        setPhotoPreview(editingDoctor.profile_photo_url);
+      }
+    } else {
+      // Reset form when not editing
+      setFormData({
+        name: '',
+        email: '',
+        phone: '',
+        specialization: '',
+        experience_years: '',
+        qualifications: '',
+        about: '',
+        location: '',
+        consultation_fee: '',
+        availability_status: 'Available',
+        profile_photo_url: '',
+        working_hours: {}
+      });
+      setPhotoPreview(null);
+      setPhotoFile(null);
+    }
+  }, [editingDoctor]);
 
   const handlePhotoChange = async (e) => {
     const file = e.target.files[0];
@@ -440,7 +508,9 @@ function AddDoctorForm({ onClose, onSave }) {
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">Add New Doctor</h3>
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">
+        {editingDoctor ? 'Edit Doctor' : 'Add New Doctor'}
+      </h3>
       <p className="text-sm text-gray-600 mb-4">
         <strong>Important:</strong> Enter the doctor's email address. This email will be used to link appointments to the doctor when they log in.
       </p>
@@ -671,9 +741,10 @@ function AddDoctorForm({ onClose, onSave }) {
         <div className="flex gap-2">
           <button
             type="submit"
-            className="flex-1 bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700"
+            className="flex-1 bg-primary-600 text-white px-4 py-2 rounded-lg hover:bg-primary-700 disabled:opacity-50"
+            disabled={uploadingPhoto}
           >
-            Save Doctor
+            {uploadingPhoto ? 'Uploading...' : (editingDoctor ? 'Update Doctor' : 'Add Doctor')}
           </button>
           <button
             type="button"

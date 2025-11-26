@@ -181,7 +181,7 @@ export const createMissedDoseAlert = async (medicineData, scheduledTime, delayMi
     
     // First, send email alert via backend API
     try {
-      const response = await fetch('http://localhost:3000/api/medicine-alerts/missed-dose', {
+      const response = await fetch('http://localhost:4000/api/medicine-alerts/missed-dose', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

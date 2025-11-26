@@ -17,6 +17,12 @@ const availabilityCollection = 'doctor_availability';
  */
 export async function getDoctors(filters = {}) {
   try {
+    // Check if db is available
+    if (!db) {
+      console.error('[getDoctors] Firestore database not available');
+      throw new Error('Database connection not available. Please check Firebase Admin configuration.');
+    }
+
     let query = db.collection(doctorsCollection).where('isActive', '==', true);
 
     if (filters.specialization) {
@@ -63,7 +69,17 @@ export async function getDoctors(filters = {}) {
 
     return doctors;
   } catch (error) {
-    console.error('Error fetching doctors:', error);
+    console.error('[getDoctors] Error fetching doctors:', error);
+    console.error('[getDoctors] Error code:', error.code);
+    console.error('[getDoctors] Error message:', error.message);
+    
+    // If it's an authentication error, provide more context
+    if (error.code === 16 || error.message.includes('UNAUTHENTICATED')) {
+      const authError = new Error('Firebase Admin authentication failed. The service account credentials are invalid or expired. Please regenerate the service account key in Google Cloud Console.');
+      authError.code = error.code;
+      throw authError;
+    }
+    
     throw error;
   }
 }
@@ -308,12 +324,15 @@ export async function createAppointment(appointmentData) {
       date: appointmentData.date,
       time_slot: appointmentData.time_slot,
       reason: appointmentData.reason || '',
+      medical_reports: appointmentData.medical_reports || [], // Array of file IDs
       status: 'pending',
       created_at: admin.firestore.FieldValue.serverTimestamp(),
       updated_at: admin.firestore.FieldValue.serverTimestamp()
     };
 
     const docRef = await db.collection(appointmentsCollection).add(appointmentDoc);
+    
+    console.log('[Appointment] Created appointment with medical_reports:', appointmentDoc.medical_reports);
     
     return {
       appointment_id: docRef.id,
@@ -449,10 +468,76 @@ export async function getDoctorAppointments(doctorIdOrUserId, filters = {}, user
           console.error(`Error fetching patient ${data.patient_id}:`, error);
         }
         
+        // Get medical reports/files if they exist
+        let medicalFiles = [];
+        if (data.medical_reports && Array.isArray(data.medical_reports) && data.medical_reports.length > 0) {
+          try {
+            const filePromises = data.medical_reports.map(async (fileId) => {
+              try {
+                // Try to get from patient-files collection by document ID
+                const fileDoc = await db.collection('patient-files').doc(fileId).get();
+                if (fileDoc.exists) {
+                  const fileData = fileDoc.data();
+                  return {
+                    id: fileDoc.id,
+                    fileName: fileData.fileName || fileData.documentName || 'Unknown',
+                    fileType: fileData.fileType || 'unknown',
+                    fileSize: fileData.fileSize || 'Unknown',
+                    uploadedDate: fileData.uploadedDate?.toDate ? fileData.uploadedDate.toDate().toISOString() : (fileData.uploadedDate || fileData.date),
+                    downloadUrl: fileData.downloadUrl || fileData.downloadURL || fileData.viewUrl || null,
+                    viewUrl: fileData.viewUrl || fileData.downloadUrl || fileData.downloadURL || null,
+                    description: fileData.description || '',
+                    base64Data: fileData.base64Data || null
+                  };
+                }
+                
+                // Fallback: Try to find by userId if direct ID lookup fails
+                // This handles cases where fileId might be a different identifier
+                if (data.patient_id) {
+                  const patientFilesQuery = await db.collection('patient-files')
+                    .where('userId', '==', data.patient_id)
+                    .limit(50) // Limit to avoid too many results
+                    .get();
+                  
+                  // Try to match by the fileId in the metadata
+                  for (const doc of patientFilesQuery.docs) {
+                    const fileData = doc.data();
+                    if (doc.id === fileId || fileData.id === fileId) {
+                      return {
+                        id: doc.id,
+                        fileName: fileData.fileName || fileData.documentName || 'Unknown',
+                        fileType: fileData.fileType || 'unknown',
+                        fileSize: fileData.fileSize || 'Unknown',
+                        uploadedDate: fileData.uploadedDate?.toDate ? fileData.uploadedDate.toDate().toISOString() : (fileData.uploadedDate || fileData.date),
+                        downloadUrl: fileData.downloadUrl || fileData.downloadURL || fileData.viewUrl || null,
+                        viewUrl: fileData.viewUrl || fileData.downloadUrl || fileData.downloadURL || null,
+                        description: fileData.description || '',
+                        base64Data: fileData.base64Data || null
+                      };
+                    }
+                  }
+                }
+                
+                console.warn(`[Appointment] File not found: ${fileId}`);
+                return null;
+              } catch (fileError) {
+                console.error(`Error fetching file ${fileId}:`, fileError);
+                return null;
+              }
+            });
+            
+            medicalFiles = (await Promise.all(filePromises)).filter(file => file !== null);
+            console.log(`[Appointment] Found ${medicalFiles.length}/${data.medical_reports.length} medical files for appointment ${doc.id}`);
+          } catch (error) {
+            console.error(`Error fetching medical files for appointment ${doc.id}:`, error);
+          }
+        }
+        
         return {
           appointment_id: doc.id,
           ...data,
-          patient
+          patient,
+          medical_files: medicalFiles // Add medical files to appointment
         };
       })
     );

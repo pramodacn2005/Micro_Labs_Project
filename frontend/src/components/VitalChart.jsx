@@ -76,6 +76,20 @@ export default function VitalChart({
         unit: '',
         trueLabel: 'Alert Active',
         falseLabel: 'Normal'
+      },
+      bloodSugar: {
+        component: LineChart,
+        color: '#dc2626',
+        title: 'Blood Sugar',
+        subtitle: 'Glucose levels over time',
+        unit: 'mg/dL'
+      },
+      bloodPressure: {
+        component: LineChart,
+        color: '#7c2d12',
+        title: 'Blood Pressure',
+        subtitle: 'Systolic/Diastolic pressure over time',
+        unit: 'mmHg'
       }
     };
     

@@ -12,6 +12,8 @@ import vitalAlertsRouter from "./routes/vitalAlerts.js";
 import feverRouter from "./routes/feverCheckRoutes.js";
 import assistantRouter from "./routes/assistantRoutes.js";
 import appointmentRouter from "./routes/appointmentRoutes.js";
+import prescriptionRouter from "./routes/prescriptionRoutes.js";
+import labReportRouter from "./routes/labReportRoutes.js";
 
 // Load .env from backend directory by default. If you keep a single root .env, set ENV_PATH.
 dotenv.config({ path: process.env.ENV_PATH || new URL(".env", import.meta.url) });
@@ -66,6 +68,8 @@ app.use("/api/vital-alerts", vitalAlertsRouter);
 app.use("/api", feverRouter);
 app.use("/api", assistantRouter);
 app.use("/api", appointmentRouter);
+app.use("/api", prescriptionRouter);
+app.use("/api", labReportRouter);
 
 if (process.env.NODE_ENV !== "test") {
   app.listen(port, () => {

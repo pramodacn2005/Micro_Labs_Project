@@ -43,6 +43,10 @@ const temperatureSchema = z
     }
   );
 
+const labValuesSchema = z
+  .record(z.union([z.number(), z.string(), z.null()]))
+  .optional();
+
 export const feverCheckSchema = z
   .object({
     age: z.number().int().min(0).max(120),
@@ -70,6 +74,8 @@ export const feverCheckSchema = z
     medical_history_text: z.string().max(500).nullable().optional(),
     body_temperature: temperatureSchema.optional(),
     location: locationSchema,
+    lab_values: labValuesSchema,
+    lab_upload_id: z.string().min(8).optional(),
     consent: z.literal(true, {
       errorMap: () => ({
         message: "Consent is required to proceed.",
@@ -110,6 +116,27 @@ export const modelTrainSchema = z.object({
     .object({
       n_estimators: z.number().min(10).max(1000).optional(),
       max_depth: z.number().min(2).max(20).optional(),
+    })
+    .optional(),
+});
+
+export const labReportPredictSchema = z.object({
+  uploadId: z.string().min(8),
+  patient: z.object({
+    age: z.number().int().min(0).max(120),
+    gender: z.enum(genderOptions),
+    name: z.string().max(120).optional(),
+  }),
+  vitals: z
+    .object({
+      temperature_c: z.number().min(30).max(45).nullable().optional(),
+      spo2: z.number().min(50).max(100).nullable().optional(),
+      heart_rate_bpm: z.number().min(20).max(220).nullable().optional(),
+    })
+    .optional(),
+  overrides: z
+    .object({
+      lab_values: z.record(z.union([z.number(), z.string(), z.null()])).optional(),
     })
     .optional(),
 });

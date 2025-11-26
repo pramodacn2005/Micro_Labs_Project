@@ -175,7 +175,9 @@ export async function uploadFile(file, userId, metadata = {}) {
       } catch (storageError) {
         console.warn('⚠️ Firebase Storage upload also failed:', storageError);
         console.warn('🔄 Falling back to base64 storage');
-        console.warn('💡 To fix CORS permanently, run: gsutil cors set cors.json gs://ai-healthcare-robot.firebasestorage.app');
+        console.warn('💡 To fix CORS permanently, see: FIREBASE_STORAGE_CORS_SETUP.md');
+        console.warn('💡 Quick fix: gsutil cors set cors-dev.json gs://ai-healthcare-robot.appspot.com');
+        console.warn('💡 Make sure VITE_FIREBASE_STORAGE_BUCKET=ai-healthcare-robot.appspot.com in your .env file');
         console.warn('💡 Make sure backend is running on port 4000');
         
         // Use base64 data URL as final fallback

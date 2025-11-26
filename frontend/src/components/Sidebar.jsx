@@ -26,10 +26,11 @@ export default function Sidebar({
     { id: "live-monitoring", icon: "📡", label: "Live Monitoring" },
     { id: "medicine-reminder", icon: "💊", label: "Medicine Reminder" },
     // Temporarily removed: { id: "alerts", icon: "🔔", label: "Alerts", badge: alertsCount },
-    { id: "fever-checker", icon: "🌡️", label: "Fever Checker" },
-    { id: "ai-assistant", icon: "🤖", label: "AI Assistant" },
+    { id: "fever-checker", icon: "🌡️", label: "Fever Analysis" },
+    { id: "ai-assistant", icon: "🤖", label: "Medibot" },
     { id: "doctor-list", icon: "🩺", label: "Find Doctors" },
     { id: "my-appointments", icon: "📅", label: "My Appointments" },
+    { id: "my-prescriptions", icon: "📋", label: "My Prescriptions" },
     { id: "history", icon: "🕓", label: "History" }
   ];
 

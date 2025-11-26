@@ -372,6 +372,21 @@ node scripts/test-demo-data.js
 
 ## 🐛 Troubleshooting
 
+### CORS Errors (Firebase Storage)
+
+If you see CORS errors when uploading files:
+
+1. **Firebase Storage CORS must be set via Google Cloud SDK** (Firebase doesn't provide a UI for this)
+2. **Quick fix:**
+   ```bash
+   # Install Google Cloud SDK: https://cloud.google.com/sdk/docs/install
+   gcloud init
+   gcloud auth login
+   gsutil cors set cors-dev.json gs://ai-healthcare-robot.appspot.com
+   ```
+3. **See detailed guide:** `FIREBASE_STORAGE_CORS_SETUP.md` or `SETUP_CORS.md`
+4. **Alternative:** Use backend API for uploads (already implemented, no CORS issues)
+
 ### Backend Issues
 
 **Port already in use:**

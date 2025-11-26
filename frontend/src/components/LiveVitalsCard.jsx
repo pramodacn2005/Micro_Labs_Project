@@ -32,7 +32,11 @@ export default function LiveVitalsCard({
       'Ambient Temperature': '🌡️',
       'Acceleration Magnitude': '📊',
       'Fall Detected': '⚠️',
-      'Alerted': '🚨'
+      'Alerted': '🚨',
+      'Blood Sugar': '🩸',
+      'Blood Glucose': '🩸',
+      'Blood Pressure': '🩺',
+      'BP': '🩺'
     };
     return iconMap[label] || '📊';
   };

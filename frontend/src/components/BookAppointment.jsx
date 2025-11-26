@@ -6,7 +6,8 @@ import {
   CheckCircleIcon,
   XCircleIcon,
   DocumentArrowUpIcon,
-  XMarkIcon
+  XMarkIcon,
+  PhoneIcon
 } from '@heroicons/react/24/outline';
 import { 
   getDoctorById, 
@@ -99,6 +100,14 @@ export default function BookAppointment({ doctorId: initialDoctorId = null }) {
       setError(err.message);
     } finally {
       setLoadingSlots(false);
+    }
+  };
+
+  const handleCallDoctor = (phoneNumber) => {
+    if (phoneNumber) {
+      // Remove any non-digit characters except + for international numbers
+      const cleanPhone = phoneNumber.replace(/[^\d+]/g, '');
+      window.location.href = `tel:${cleanPhone}`;
     }
   };
 
@@ -271,30 +280,45 @@ export default function BookAppointment({ doctorId: initialDoctorId = null }) {
       {/* Doctor Info Card */}
       {doctor && (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
-          <div className="flex items-center gap-4">
-            {doctor.profile_photo_url ? (
-              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-gray-50 to-gray-100 border border-gray-200 overflow-hidden">
-                <img
-                  src={doctor.profile_photo_url}
-                  alt={doctor.name}
-                  className="w-full h-full object-cover object-top"
-                  style={{ 
-                    background: 'linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)'
-                  }}
-                />
-              </div>
-            ) : (
-              <div className="w-16 h-16 rounded-full bg-primary-100 flex items-center justify-center">
-                <UserIcon className="w-8 h-8 text-primary-600" />
-              </div>
-            )}
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">{doctor.name}</h2>
-              <p className="text-primary-600 font-medium">{doctor.specialization}</p>
-              {doctor.location?.city && (
-                <p className="text-sm text-gray-600">{doctor.location.city}</p>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              {doctor.profile_photo_url ? (
+                <div className="w-16 h-16 rounded-full bg-gradient-to-br from-gray-50 to-gray-100 border border-gray-200 overflow-hidden">
+                  <img
+                    src={doctor.profile_photo_url}
+                    alt={doctor.name}
+                    className="w-full h-full object-cover object-top"
+                    style={{ 
+                      background: 'linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%)'
+                    }}
+                  />
+                </div>
+              ) : (
+                <div className="w-16 h-16 rounded-full bg-primary-100 flex items-center justify-center">
+                  <UserIcon className="w-8 h-8 text-primary-600" />
+                </div>
               )}
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">{doctor.name}</h2>
+                <p className="text-primary-600 font-medium">{doctor.specialization}</p>
+                {doctor.location?.city && (
+                  <p className="text-sm text-gray-600">{doctor.location.city}</p>
+                )}
+                {doctor.phone && (
+                  <p className="text-sm text-gray-600 mt-1">📞 {doctor.phone}</p>
+                )}
+              </div>
             </div>
+            {doctor.phone && (
+              <button
+                onClick={() => handleCallDoctor(doctor.phone)}
+                className="bg-green-600 text-white px-5 py-2.5 rounded-lg font-medium hover:bg-green-700 transition-colors flex items-center gap-2 shadow-sm"
+                title={`Call ${doctor.name}`}
+              >
+                <PhoneIcon className="w-5 h-5" />
+                Call Doctor
+              </button>
+            )}
           </div>
         </div>
       )}

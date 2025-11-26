@@ -57,7 +57,11 @@ export default function Tooltip({
       ambientTemp: { name: 'Ambient Temperature', icon: '🌡️' },
       accMagnitude: { name: 'Acceleration Magnitude', icon: '📊' },
       fallDetected: { name: 'Fall Detection', icon: '⚠️' },
-      alerted: { name: 'Alert Status', icon: '🚨' }
+      alerted: { name: 'Alert Status', icon: '🚨' },
+      bloodSugar: { name: 'Blood Sugar', icon: '🩸' },
+      bloodPressure: { name: 'Blood Pressure', icon: '🩺' },
+      bloodPressureSystolic: { name: 'Blood Pressure (Systolic)', icon: '🩺' },
+      bloodPressureDiastolic: { name: 'Blood Pressure (Diastolic)', icon: '🩺' }
     };
     return vitals[type] || { name: 'Vital Sign', icon: '📊' };
   };

@@ -10,18 +10,42 @@ const DISCLAIMER =
   "This is an AI-driven suggestion, not a diagnosis. Consult a healthcare professional.";
 
 function buildSystemPrompt(session) {
-  const summary = [
+  const summaryParts = [
     `Prediction label: ${session?.prediction?.label}`,
     `Probability: ${Math.round((session?.prediction?.probability || 0) * 100)}%`,
     `Severity bucket: ${session?.prediction?.severity}`,
-    `Age: ${session?.inputs?.age}`,
-    `Gender: ${session?.inputs?.gender}`,
-    `Medical history: ${session?.inputs?.medical_history_text || "None provided"}`,
-    `Top features: ${(session?.explainability?.top_features || [])
-      .slice(0, 5)
-      .map((f) => `${f.feature} (${(f.importance * 100).toFixed(1)}%)`)
-      .join(", ")}`,
-  ].join("\n");
+  ];
+
+  if (session?.inputs?.age) summaryParts.push(`Age: ${session.inputs.age}`);
+  if (session?.inputs?.gender) summaryParts.push(`Gender: ${session.inputs.gender}`);
+  if (session?.inputs?.medical_history_text) {
+    summaryParts.push(`Medical history: ${session.inputs.medical_history_text}`);
+  }
+
+  if (session?.labReport?.labValues) {
+    const labEntries = Object.entries(session.labReport.labValues)
+      .filter(([, value]) => value != null)
+      .slice(0, 8)
+      .map(([key, value]) => `${key}: ${value}`)
+      .join(", ");
+    summaryParts.push(`Extracted lab values: ${labEntries || "N/A"}`);
+    summaryParts.push(`Lab severity score: ${session.labReport.severity?.score ?? "n/a"}`);
+  }
+
+  const topFeatures = (session?.explainability?.top_features || [])
+    .slice(0, 5)
+    .map((f) => `${f.feature} (${(f.importance * 100).toFixed(1)}%)`)
+    .join(", ");
+  if (topFeatures) {
+    summaryParts.push(`Top contributing features: ${topFeatures}`);
+  }
+
+  if (session?.medications?.length) {
+    const medNames = session.medications.map((med) => med.name).join(", ");
+    summaryParts.push(`Medication plan: ${medNames}`);
+  }
+
+  const summary = summaryParts.join("\n");
 
   return `
 You are a helpful, cautious medical assistant. 
@@ -133,6 +157,9 @@ Diet plan: ${JSON.stringify(dietPlan)}
   const reply = `${aiReply?.trim()}\n\n${DISCLAIMER}`;
   return { reply, intent, meds, dietPlan };
 }
+
+
+
 
 
 
