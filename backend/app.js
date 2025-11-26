@@ -19,7 +19,7 @@ import labReportRouter from "./routes/labReportRoutes.js";
 dotenv.config({ path: process.env.ENV_PATH || new URL(".env", import.meta.url) });
 
 const app = express();
-const port = process.env.PORT || 4000;
+const PORT = process.env.PORT || 4000;
 
 // CORS configuration - allow frontend origin and handle preflight
 // In development, allow all origins to avoid CORS issues
@@ -72,8 +72,8 @@ app.use("/api", prescriptionRouter);
 app.use("/api", labReportRouter);
 
 if (process.env.NODE_ENV !== "test") {
-  app.listen(port, () => {
-    console.log(`Backend listening on http://localhost:${port}`);
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
   });
 }
 
